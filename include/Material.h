@@ -92,22 +92,32 @@ struct Material {
             }
 
             case MaterialType::DIELECTRIC: {
-                float cosi = std::clamp(-dot(wi, N), -1.0f, 1.0f);
+                float cosi = dot(-wi, N);
                 bool entering = cosi > 0;
                 Vec3f n = entering ? N : -N;
+                float etai = 1.0f, etat = ior;
+                if (!entering) std::swap(etai, etat);
                 cosi = std::fabs(cosi);
 
-                float kr = fresnel_exact(wi, N, ior);
+                float sint = etai / etat * std::sqrt(std::max(0.0f, 1.0f - cosi * cosi));
+                float kr;
+                if (sint >= 1.0f) {
+                    kr = 1.0f;
+                } else {
+                    float cost = std::sqrt(std::max(0.0f, 1.0f - sint * sint));
+                    float Rs = ((etat * cosi) - (etai * cost)) / ((etat * cosi) + (etai * cost));
+                    float Rp = ((etai * cosi) - (etat * cost)) / ((etai * cosi) + (etat * cost));
+                    kr = (Rs * Rs + Rp * Rp) / 2.0f;
+                }
 
                 if (random_float() < kr) {
                     // Reflect
                     return reflect(wi, n).normalized();
                 } else {
-                    // Refract
-                    Vec3f refracted = refract(wi, n, entering ? ior : 1.0f / ior);
-                    if (refracted.length2() < 1e-6f) {
-                        return reflect(wi, n).normalized(); // total internal reflection
-                    }
+                    float eta = etai / etat;
+                    float k = 1.0f - eta * eta * (1.0f - cosi * cosi);
+                    if (k < 0) return reflect(wi, n).normalized();
+                    Vec3f refracted = eta * wi + (eta * cosi - std::sqrt(k)) * n;
                     return refracted.normalized();
                 }
             }

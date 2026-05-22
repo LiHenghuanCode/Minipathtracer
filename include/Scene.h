@@ -3,6 +3,7 @@
 #include "Triangle.h"
 #include "BVH.h"
 #include "Material.h"
+#include "Ocean.h"
 #include "Texture.h"
 #include <vector>
 #include <string>
@@ -78,6 +79,7 @@ private:
     std::vector<Material> materials;
     std::map<std::string, int> materialMap; // name -> index
     std::vector<std::unique_ptr<Texture>> textures;
+    std::unique_ptr<Ocean> ocean;
     BVH bvh;
     AABB sceneBounds;
 };

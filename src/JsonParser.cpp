@@ -248,6 +248,8 @@ void JsonParser::parseCamera(Lexer& lex, SceneConfig& cfg) {
         expectToken(lex, Token::COLON);
         if (key == "position") cfg.cameraPos = parseVec3(lex);
         else if (key == "lookAt") cfg.cameraLookAt = parseVec3(lex);
+        else if (key == "up" || key == "cameraUp") cfg.cameraUp = parseVec3(lex);
+        else if (key == "right" || key == "cameraRight") cfg.cameraRight = parseVec3(lex);
         else if (key == "fov") cfg.fov = expectNumber(lex);
         else skipValue(lex);
 

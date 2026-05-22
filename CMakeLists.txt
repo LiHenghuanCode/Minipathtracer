@@ -15,6 +15,7 @@ add_executable(pathtracer
     src/BVH.cpp
     src/Texture.cpp
     src/JsonParser.cpp
+    src/Ocean.cpp
 )
 
 target_include_directories(pathtracer PRIVATE include)

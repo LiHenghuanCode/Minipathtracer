@@ -1,5 +1,4 @@
 #include "Scene.h"
-#include "Noise.h"
 #include "OBJ_Loader.h"
 #include <iostream>
 #include <algorithm>
@@ -47,6 +46,9 @@ void Scene::loadFromConfig(const SceneConfig& cfg) {
     }
 
     buildBVH();
+    ocean = std::make_unique<Ocean>(256, 20.0f, 10.0f, Vec3f(1, 0, 0.5f).normalized(), 0.5f, 5.0f);
+    ocean->generate();
+    std::cout << "Ocean FFT generated." << std::endl;
     std::cout << "Scene loaded: " << triangles.size() << " triangles, "
               << materials.size() << " materials" << std::endl;
 }
@@ -267,24 +269,8 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
     Vec3f hitPoint = isect.position;
     Vec3f N = isect.normal;
 
-    if (mat.type == MaterialType::DIELECTRIC) {
-        constexpr float frequency = 2.0f;
-        constexpr float amplitude = 0.03f;
-        constexpr int octaves = 3;
-        constexpr float lacunarity = 2.0f;
-        constexpr float persistence = 0.5f;
-        constexpr float epsilon = 0.05f;
-
-        auto waterHeight = [&](float x, float z) {
-            return amplitude * Noise::fbm(x * frequency, 0.0f, z * frequency,
-                                          octaves, lacunarity, persistence);
-        };
-
-        float dx = (waterHeight(hitPoint.x + epsilon, hitPoint.z) -
-                    waterHeight(hitPoint.x - epsilon, hitPoint.z)) / (2.0f * epsilon);
-        float dz = (waterHeight(hitPoint.x, hitPoint.z + epsilon) -
-                    waterHeight(hitPoint.x, hitPoint.z - epsilon)) / (2.0f * epsilon);
-        N = normalize(Vec3f(-dx, 1.0f, -dz));
+    if (mat.type == MaterialType::DIELECTRIC && ocean) {
+        N = ocean->getNormal(hitPoint.x, hitPoint.z);
     }
 
     // Ensure normal faces the ray
@@ -327,10 +313,10 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
     Intersection bounceIsect = bvh.intersect(bounceRay);
     Vec3f indirect = castRay(bounceRay, depth + 1);
 
-    bool enteringDielectric = mat.type == MaterialType::DIELECTRIC &&
-                              dot(ray.direction, N) < 0.0f &&
-                              dot(wo, N) < 0.0f;
-    if (enteringDielectric && bounceIsect.hit) {
+    bool enteringWater = mat.type == MaterialType::DIELECTRIC &&
+                         dot(ray.direction, isect.normal) < 0.0f &&
+                         dot(wo, isect.normal) < 0.0f;
+    if (enteringWater && bounceIsect.hit) {
         float distance = bounceIsect.t;
         Vec3f attenuation(
             std::exp(-mat.absorptionColor.x * distance),
