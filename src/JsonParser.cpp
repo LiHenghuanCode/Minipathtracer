@@ -5,6 +5,57 @@
 #include <stdexcept>
 #include <filesystem>
 
+namespace {
+std::filesystem::path resolveInputPath(const std::string& filename) {
+    std::filesystem::path path(filename);
+    if (path.is_absolute() && std::filesystem::exists(path)) {
+        return path;
+    }
+
+    if (std::filesystem::exists(path)) {
+        return path;
+    }
+
+    if (path.is_relative()) {
+        std::filesystem::path probe = std::filesystem::current_path();
+        while (true) {
+            std::filesystem::path candidate = probe / path;
+            if (std::filesystem::exists(candidate)) {
+                return candidate;
+            }
+            if (probe == probe.root_path()) {
+                break;
+            }
+            probe = probe.parent_path();
+        }
+    }
+
+    return path;
+}
+
+std::string resolveRelativeTo(const std::filesystem::path& baseDir, const std::string& value) {
+    std::filesystem::path path(value);
+    if (path.is_relative()) {
+        return (baseDir / path).string();
+    }
+    return path.string();
+}
+
+std::string resolveAssetPath(const std::filesystem::path& baseDir, const std::string& value) {
+    std::filesystem::path path(value);
+    if (!path.is_relative()) {
+        return path.string();
+    }
+
+    std::filesystem::path configRelative = baseDir / path;
+    if (std::filesystem::exists(configRelative)) {
+        return configRelative.string();
+    }
+
+    return resolveInputPath(value).string();
+}
+}
+
 // ===== Lexer =====
 
 void JsonParser::Lexer::skipWhitespace() {
@@ -449,10 +500,12 @@ SceneConfig JsonParser::parse(const std::string& filename) {
 }
 
 void JsonParser::parseInto(const std::string& filename, SceneConfig& cfg) {
-    std::ifstream file(filename);
+    std::filesystem::path resolvedFilename = resolveInputPath(filename);
+    std::ifstream file(resolvedFilename);
     if (!file.is_open()) {
         throw std::runtime_error("Cannot open config file: " + filename);
     }
+    std::filesystem::path baseDir = resolvedFilename.parent_path();
 
     std::stringstream ss;
     ss << file.rdbuf();
@@ -482,10 +535,20 @@ void JsonParser::parseInto(const std::string& filename, SceneConfig& cfg) {
         if (t.type == Token::COMMA) t = lex.next();
     }
 
+    if (cfg.outputFile != "output.ppm") {
+        cfg.outputFile = resolveRelativeTo(baseDir, cfg.outputFile);
+    }
+
+    for (auto& obj : cfg.objects) {
+        if (!obj.file.empty()) {
+            obj.file = resolveAssetPath(baseDir, obj.file);
+        }
+    }
+
     if (!sceneDataFile.empty()) {
         std::filesystem::path sceneDataPath(sceneDataFile);
         if (sceneDataPath.is_relative()) {
-            sceneDataPath = std::filesystem::path(filename).parent_path() / sceneDataPath;
+            sceneDataPath = baseDir / sceneDataPath;
         }
         parseInto(sceneDataPath.string(), cfg);
     }

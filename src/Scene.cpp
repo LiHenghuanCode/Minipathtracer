@@ -1,4 +1,5 @@
 #include "Scene.h"
+#include "Noise.h"
 #include "OBJ_Loader.h"
 #include <iostream>
 #include <algorithm>
@@ -266,6 +267,26 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
     Vec3f hitPoint = isect.position;
     Vec3f N = isect.normal;
 
+    if (mat.type == MaterialType::DIELECTRIC) {
+        constexpr float frequency = 2.0f;
+        constexpr float amplitude = 0.03f;
+        constexpr int octaves = 3;
+        constexpr float lacunarity = 2.0f;
+        constexpr float persistence = 0.5f;
+        constexpr float epsilon = 0.05f;
+
+        auto waterHeight = [&](float x, float z) {
+            return amplitude * Noise::fbm(x * frequency, 0.0f, z * frequency,
+                                          octaves, lacunarity, persistence);
+        };
+
+        float dx = (waterHeight(hitPoint.x + epsilon, hitPoint.z) -
+                    waterHeight(hitPoint.x - epsilon, hitPoint.z)) / (2.0f * epsilon);
+        float dz = (waterHeight(hitPoint.x, hitPoint.z + epsilon) -
+                    waterHeight(hitPoint.x, hitPoint.z - epsilon)) / (2.0f * epsilon);
+        N = normalize(Vec3f(-dx, 1.0f, -dz));
+    }
+
     // Ensure normal faces the ray
     if (dot(N, ray.direction) > 0 && mat.type != MaterialType::DIELECTRIC) {
         N = -N;
@@ -303,7 +324,21 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
     // Offset origin to avoid self-intersection
     Vec3f offset = dot(wo, N) > 0 ? N * 1e-3f : -N * 1e-3f;
     Ray bounceRay(hitPoint + offset, wo);
+    Intersection bounceIsect = bvh.intersect(bounceRay);
     Vec3f indirect = castRay(bounceRay, depth + 1);
+
+    bool enteringDielectric = mat.type == MaterialType::DIELECTRIC &&
+                              dot(ray.direction, N) < 0.0f &&
+                              dot(wo, N) < 0.0f;
+    if (enteringDielectric && bounceIsect.hit) {
+        float distance = bounceIsect.t;
+        Vec3f attenuation(
+            std::exp(-mat.absorptionColor.x * distance),
+            std::exp(-mat.absorptionColor.y * distance),
+            std::exp(-mat.absorptionColor.z * distance)
+        );
+        indirect = indirect * attenuation;
+    }
 
     Vec3f result;
     if (mat.type == MaterialType::DIFFUSE) {

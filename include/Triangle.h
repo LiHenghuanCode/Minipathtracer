@@ -7,7 +7,7 @@ struct Triangle {
     float u0, v0t, u1, v1t, u2, v2t; // tex coords
     int materialId;
 
-    Triangle() : materialId(-1), u0(0), v0t(0), u1(0), v1t(0), u2(0), v2t(0) {}
+    Triangle() : u0(0), v0t(0), u1(0), v1t(0), u2(0), v2t(0), materialId(-1) {}
 
     Vec3f centroid() const { return (v0 + v1 + v2) / 3.0f; }
 

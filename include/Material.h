@@ -31,6 +31,7 @@ struct Material {
     float metallic = 0.0f;
     float ior = 1.5f;                // index of refraction
     float opacity = 1.0f;            // 1 = opaque
+    Vec3f absorptionColor = Vec3f(0.2f, 0.05f, 0.01f);
     Texture* texture = nullptr;      // diffuse texture (not owned)
 
     bool hasEmission() const {
@@ -94,10 +95,9 @@ struct Material {
                 float cosi = std::clamp(-dot(wi, N), -1.0f, 1.0f);
                 bool entering = cosi > 0;
                 Vec3f n = entering ? N : -N;
-                float eta = entering ? (1.0f / ior) : ior;
                 cosi = std::fabs(cosi);
 
-                float kr = fresnel_schlick(cosi, ior);
+                float kr = fresnel_exact(wi, N, ior);
 
                 if (random_float() < kr) {
                     // Reflect
