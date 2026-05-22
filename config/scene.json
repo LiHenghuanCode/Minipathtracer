@@ -1,0 +1,52 @@
+{
+    "render": {
+        "width": 800,
+        "height": 600,
+        "samples": 64,
+        "maxDepth": 8,
+        "output": "output.ppm"
+    },
+    "camera": {
+        "position": [0, 2.0, 6],
+        "lookAt": [0, 0.5, 0],
+        "fov": 45
+    },
+    "objects": [
+        {
+            "type": "obj",
+            "file": "assets/models/plane.obj",
+            "position": [0, 1, 0],
+            "scale": 1.0,
+            "material": "metal",
+            "color": [0.8, 0.8, 0.85],
+            "roughness": 0.3
+        },
+        {
+            "type": "obj",
+            "file": "assets/models/bridge.obj",
+            "position": [0, 0, -2],
+            "scale": 1.0,
+            "material": "metal",
+            "color": [0.76, 0.23, 0.13],
+            "roughness": 0.5
+        },
+        {
+            "type": "plane",
+            "position": [0, -0.1, 0],
+            "scale": 50.0,
+            "material": "glass",
+            "color": [0.1, 0.2, 0.4],
+            "ior": 1.33,
+            "opacity": 0.3
+        }
+    ],
+    "lighting": {
+        "sunDirection": [-1, -0.3, -0.5],
+        "sunColor": [1.0, 0.55, 0.25],
+        "sunIntensity": 4.0
+    },
+    "sky": {
+        "top": [0.2, 0.3, 0.8],
+        "bottom": [1.0, 0.6, 0.3]
+    }
+}

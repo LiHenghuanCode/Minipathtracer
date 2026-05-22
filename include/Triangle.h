@@ -1,0 +1,61 @@
+#pragma once
+#include "Vec3.h"
+
+struct Triangle {
+    Vec3f v0, v1, v2;       // positions
+    Vec3f n0, n1, n2;       // normals
+    float u0, v0t, u1, v1t, u2, v2t; // tex coords
+    int materialId;
+
+    Triangle() : materialId(-1), u0(0), v0t(0), u1(0), v1t(0), u2(0), v2t(0) {}
+
+    Vec3f centroid() const { return (v0 + v1 + v2) / 3.0f; }
+
+    Vec3f faceNormal() const {
+        return cross(v1 - v0, v2 - v0).normalized();
+    }
+};
+
+struct Intersection {
+    bool hit = false;
+    float t = 1e30f;
+    Vec3f position;
+    Vec3f normal;
+    float u = 0, v = 0;  // barycentric
+    float texU = 0, texV = 0; // texture coords
+    int materialId = -1;
+
+    // Interpolate from triangle
+    void interpolate(const Triangle& tri, float uu, float vv) {
+        float w = 1.0f - uu - vv;
+        normal = (tri.n0 * w + tri.n1 * uu + tri.n2 * vv).normalized();
+        texU = tri.u0 * w + tri.u1 * uu + tri.u2 * vv;
+        texV = tri.v0t * w + tri.v1t * uu + tri.v2t * vv;
+        materialId = tri.materialId;
+        u = uu;
+        v = vv;
+    }
+};
+
+// Moller-Trumbore ray-triangle intersection
+inline bool rayTriangleIntersect(const Ray& ray, const Triangle& tri,
+                                  float& t, float& u, float& v) {
+    Vec3f edge1 = tri.v1 - tri.v0;
+    Vec3f edge2 = tri.v2 - tri.v0;
+    Vec3f pvec = cross(ray.direction, edge2);
+    float det = dot(edge1, pvec);
+
+    if (std::fabs(det) < 1e-8f) return false;
+
+    float invDet = 1.0f / det;
+    Vec3f tvec = ray.origin - tri.v0;
+    u = dot(tvec, pvec) * invDet;
+    if (u < 0.0f || u > 1.0f) return false;
+
+    Vec3f qvec = cross(tvec, edge1);
+    v = dot(ray.direction, qvec) * invDet;
+    if (v < 0.0f || u + v > 1.0f) return false;
+
+    t = dot(edge2, qvec) * invDet;
+    return t > 1e-4f;
+}
