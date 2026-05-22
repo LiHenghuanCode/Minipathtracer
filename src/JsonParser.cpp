@@ -3,6 +3,7 @@
 #include <sstream>
 #include <iostream>
 #include <stdexcept>
+#include <filesystem>
 
 // ===== Lexer =====
 
@@ -86,6 +87,13 @@ float JsonParser::expectNumber(Lexer& lex) {
     return std::stof(t.value);
 }
 
+bool JsonParser::expectBool(Lexer& lex) {
+    Token t = lex.next();
+    if (t.type == Token::TRUE_T) return true;
+    if (t.type == Token::FALSE_T) return false;
+    throw std::runtime_error("Expected bool, got: " + t.value);
+}
+
 std::string JsonParser::expectString(Lexer& lex) {
     Token t = lex.next();
     if (t.type != Token::STRING) throw std::runtime_error("Expected string, got: " + t.value);
@@ -106,6 +114,28 @@ Vec3f JsonParser::parseVec3(Lexer& lex) {
     float z = expectNumber(lex);
     expectToken(lex, Token::RBRACKET);
     return Vec3f(x, y, z);
+}
+
+Vec3f JsonParser::blenderToRendererPoint(const Vec3f& v) {
+    return Vec3f(v.x, v.z, -v.y);
+}
+
+Vec3f JsonParser::blenderToRendererVector(const Vec3f& v) {
+    return blenderToRendererPoint(v).normalized();
+}
+
+void JsonParser::parseMatrix4(Lexer& lex, float matrix[4][4]) {
+    expectToken(lex, Token::LBRACKET);
+    for (int row = 0; row < 4; ++row) {
+        expectToken(lex, Token::LBRACKET);
+        for (int col = 0; col < 4; ++col) {
+            matrix[row][col] = expectNumber(lex);
+            if (col < 3) expectToken(lex, Token::COMMA);
+        }
+        expectToken(lex, Token::RBRACKET);
+        if (row < 3) expectToken(lex, Token::COMMA);
+    }
+    expectToken(lex, Token::RBRACKET);
 }
 
 void JsonParser::skipValue(Lexer& lex) {
@@ -151,6 +181,7 @@ void JsonParser::parseRender(Lexer& lex, SceneConfig& cfg) {
         else if (key == "samples") cfg.spp = (int)expectNumber(lex);
         else if (key == "maxDepth") cfg.maxDepth = (int)expectNumber(lex);
         else if (key == "output") cfg.outputFile = expectString(lex);
+        else if (key == "debug" || key == "debugMode") cfg.debugMode = expectBool(lex);
         else skipValue(lex);
 
         t = lex.next();
@@ -191,6 +222,8 @@ void JsonParser::parseObject(Lexer& lex, SceneConfig::ObjectEntry& obj) {
         else if (key == "metallic") obj.metallic = expectNumber(lex);
         else if (key == "ior") obj.ior = expectNumber(lex);
         else if (key == "opacity") obj.opacity = expectNumber(lex);
+        else if (key == "coordinateSystem") obj.convertFromBlender = expectString(lex) == "blender";
+        else if (key == "blenderCoordinates") obj.convertFromBlender = expectBool(lex);
         else skipValue(lex);
 
         t = lex.next();
@@ -229,6 +262,8 @@ void JsonParser::parseObjects(Lexer& lex, SceneConfig& cfg) {
                 else if (key == "metallic") obj.metallic = expectNumber(lex);
                 else if (key == "ior") obj.ior = expectNumber(lex);
                 else if (key == "opacity") obj.opacity = expectNumber(lex);
+                else if (key == "coordinateSystem") obj.convertFromBlender = expectString(lex) == "blender";
+                else if (key == "blenderCoordinates") obj.convertFromBlender = expectBool(lex);
                 else skipValue(lex);
 
                 inner = lex.next();
@@ -272,9 +307,148 @@ void JsonParser::parseSky(Lexer& lex, SceneConfig& cfg) {
     }
 }
 
+void JsonParser::parseCameras(Lexer& lex, SceneConfig& cfg) {
+    expectToken(lex, Token::LBRACKET);
+    bool appliedCamera = false;
+
+    Token t = lex.next();
+    while (t.type != Token::RBRACKET) {
+        if (t.type != Token::LBRACE) {
+            throw std::runtime_error("Expected camera object");
+        }
+
+        std::string name;
+        Vec3f position = cfg.cameraPos;
+        Vec3f right;
+        Vec3f up = cfg.cameraUp;
+        Vec3f backward;
+        Vec3f forward;
+        float fov = cfg.fov;
+        bool hasPosition = false;
+        bool hasMatrix = false;
+        bool hasFov = false;
+        float matrix[4][4] = {};
+
+        Token inner = lex.next();
+        while (inner.type != Token::RBRACE) {
+            std::string key = inner.value;
+            expectToken(lex, Token::COLON);
+
+            if (key == "name") {
+                name = expectString(lex);
+            } else if (key == "position") {
+                position = parseVec3(lex);
+                hasPosition = true;
+            } else if (key == "fov_degrees" || key == "fov") {
+                fov = expectNumber(lex);
+                hasFov = true;
+            } else if (key == "matrix_world") {
+                parseMatrix4(lex, matrix);
+                hasMatrix = true;
+            } else {
+                skipValue(lex);
+            }
+
+            inner = lex.next();
+            if (inner.type == Token::COMMA) inner = lex.next();
+        }
+
+        if (!appliedCamera && (name.empty() || name == "camera_main")) {
+            if (hasMatrix) {
+                position = blenderToRendererPoint(Vec3f(matrix[0][3], matrix[1][3], matrix[2][3]));
+            } else if (hasPosition) {
+                position = blenderToRendererPoint(position);
+            }
+            cfg.cameraPos = position;
+            if (hasFov) cfg.fov = fov;
+            if (hasMatrix) {
+                right = blenderToRendererVector(Vec3f(matrix[0][0], matrix[1][0], matrix[2][0]));
+                up = blenderToRendererVector(Vec3f(matrix[0][1], matrix[1][1], matrix[2][1]));
+                backward = blenderToRendererVector(Vec3f(matrix[0][2], matrix[1][2], matrix[2][2]));
+                forward = -backward;
+                if (forward.length2() > 1e-8f) {
+                    cfg.cameraLookAt = cfg.cameraPos + forward * 10.0f;
+                }
+                if (up.length2() > 1e-8f) {
+                    cfg.cameraUp = up;
+                }
+                if (right.length2() > 1e-8f) {
+                    cfg.cameraRight = right;
+                }
+            }
+            appliedCamera = true;
+        }
+
+        t = lex.next();
+        if (t.type == Token::COMMA) t = lex.next();
+    }
+}
+
+void JsonParser::parseLights(Lexer& lex, SceneConfig& cfg) {
+    expectToken(lex, Token::LBRACKET);
+    bool appliedSun = false;
+
+    Token t = lex.next();
+    while (t.type != Token::RBRACKET) {
+        if (t.type != Token::LBRACE) {
+            throw std::runtime_error("Expected light object");
+        }
+
+        std::string type;
+        float energy = cfg.sun.intensity;
+        bool hasEnergy = false;
+        bool hasMatrix = false;
+        float matrix[4][4] = {};
+
+        Token inner = lex.next();
+        while (inner.type != Token::RBRACE) {
+            std::string key = inner.value;
+            expectToken(lex, Token::COLON);
+
+            if (key == "type") {
+                type = expectString(lex);
+            } else if (key == "energy") {
+                energy = expectNumber(lex);
+                hasEnergy = true;
+            } else if (key == "matrix_world") {
+                parseMatrix4(lex, matrix);
+                hasMatrix = true;
+            } else {
+                skipValue(lex);
+            }
+
+            inner = lex.next();
+            if (inner.type == Token::COMMA) inner = lex.next();
+        }
+
+        if (!appliedSun && type == "SUN") {
+            if (hasEnergy) cfg.sun.intensity = energy;
+            if (hasMatrix) {
+                Vec3f backward = blenderToRendererVector(Vec3f(matrix[0][2], matrix[1][2], matrix[2][2]));
+                cfg.sun.direction = -backward;
+            }
+            appliedSun = true;
+        }
+
+        t = lex.next();
+        if (t.type == Token::COMMA) t = lex.next();
+    }
+}
+
 // ===== Main parse =====
 
 SceneConfig JsonParser::parse(const std::string& filename) {
+    SceneConfig cfg;
+    // Defaults for sun
+    cfg.sun.direction = Vec3f(-1, -0.3f, -0.5f);
+    cfg.sun.color = Vec3f(1.0f, 0.55f, 0.25f);
+    cfg.sun.intensity = 4.0f;
+
+    parseInto(filename, cfg);
+    return cfg;
+}
+
+void JsonParser::parseInto(const std::string& filename, SceneConfig& cfg) {
     std::ifstream file(filename);
     if (!file.is_open()) {
         throw std::runtime_error("Cannot open config file: " + filename);
@@ -284,13 +458,8 @@ SceneConfig JsonParser::parse(const std::string& filename) {
     ss << file.rdbuf();
     std::string content = ss.str();
 
-    SceneConfig cfg;
-    // Defaults for sun
-    cfg.sun.direction = Vec3f(-1, -0.3f, -0.5f);
-    cfg.sun.color = Vec3f(1.0f, 0.55f, 0.25f);
-    cfg.sun.intensity = 4.0f;
-
     Lexer lex(content);
+    std::string sceneDataFile;
 
     expectToken(lex, Token::LBRACE); // root {
 
@@ -304,11 +473,20 @@ SceneConfig JsonParser::parse(const std::string& filename) {
         else if (key == "objects") parseObjects(lex, cfg);
         else if (key == "lighting") parseLighting(lex, cfg);
         else if (key == "sky") parseSky(lex, cfg);
+        else if (key == "cameras") parseCameras(lex, cfg);
+        else if (key == "lights") parseLights(lex, cfg);
+        else if (key == "sceneData") sceneDataFile = expectString(lex);
         else skipValue(lex);
 
         t = lex.next();
         if (t.type == Token::COMMA) t = lex.next();
     }
 
-    return cfg;
+    if (!sceneDataFile.empty()) {
+        std::filesystem::path sceneDataPath(sceneDataFile);
+        if (sceneDataPath.is_relative()) {
+            sceneDataPath = std::filesystem::path(filename).parent_path() / sceneDataPath;
+        }
+        parseInto(sceneDataPath.string(), cfg);
+    }
 }

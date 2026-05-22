@@ -4,8 +4,27 @@
 #include <algorithm>
 #include <filesystem>
 
+namespace {
+void printVec3(const char* label, const Vec3f& v) {
+    std::cout << label << " = (" << v.x << ", " << v.y << ", " << v.z << ")" << std::endl;
+}
+
+Vec3f blenderToRendererPoint(const Vec3f& v) {
+    return Vec3f(v.x, v.z, -v.y);
+}
+
+Vec3f blenderToRendererVector(const Vec3f& v) {
+    return blenderToRendererPoint(v).normalized();
+}
+}
+
 void Scene::loadFromConfig(const SceneConfig& cfg) {
     config = cfg;
+    triangles.clear();
+    materials.clear();
+    materialMap.clear();
+    textures.clear();
+    sceneBounds = AABB{};
 
     for (auto& entry : config.objects) {
         if (entry.type == "obj") {
@@ -13,6 +32,17 @@ void Scene::loadFromConfig(const SceneConfig& cfg) {
         } else if (entry.type == "plane") {
             addPlane(entry);
         }
+    }
+
+    for (const auto& tri : triangles) {
+        sceneBounds.expand(tri);
+    }
+
+    if (!triangles.empty()) {
+        printVec3("OBJ bounding box min", sceneBounds.min_p);
+        printVec3("OBJ bounding box max", sceneBounds.max_p);
+        printVec3("OBJ bounding box center", sceneBounds.centroid());
+        printVec3("OBJ bounding box size", sceneBounds.extent());
     }
 
     buildBVH();
@@ -66,6 +96,9 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
         if (!mtl.map_Kd.empty()) {
             auto tex = std::make_unique<Texture>();
             std::string texPath = basePath + mtl.map_Kd;
+            if (!std::filesystem::exists(texPath)) {
+                texPath = basePath + "textures/" + mtl.map_Kd;
+            }
             if (tex->load(texPath)) {
                 mat.texture = tex.get();
                 textures.push_back(std::move(tex));
@@ -106,10 +139,16 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
             for (int j = 0; j < 3; ++j) {
                 auto& v = mesh.Vertices[i + j];
                 Vec3f pos(v.Position.X, v.Position.Y, v.Position.Z);
+                if (entry.convertFromBlender) {
+                    pos = blenderToRendererPoint(pos);
+                }
                 // Apply transform: scale -> rotate (TODO) -> translate
                 pos = pos * entry.scale + entry.position;
 
                 Vec3f nor(v.Normal.X, v.Normal.Y, v.Normal.Z);
+                if (entry.convertFromBlender) {
+                    nor = blenderToRendererVector(nor);
+                }
 
                 if (j == 0) {
                     tri.v0 = pos; tri.n0 = nor;

@@ -25,7 +25,10 @@ struct SceneConfig {
     // Camera
     Vec3f cameraPos = Vec3f(0, 1.5f, 5);
     Vec3f cameraLookAt = Vec3f(0, 0.8f, 0);
+    Vec3f cameraRight = Vec3f(1, 0, 0);
+    Vec3f cameraUp = Vec3f(0, 1, 0);
     float fov = 45.0f;
+    bool debugMode = false;
 
     // Lighting
     DirectionalLight sun;
@@ -46,6 +49,7 @@ struct SceneConfig {
         float metallic = -1;
         float ior = -1;
         float opacity = -1;
+        bool convertFromBlender = false;
     };
     std::vector<ObjectEntry> objects;
 
@@ -58,6 +62,7 @@ public:
 
     void loadFromConfig(const SceneConfig& config);
     Vec3f castRay(const Ray& ray, int depth) const;
+    const AABB& bounds() const { return sceneBounds; }
 
     SceneConfig config;
 
@@ -74,4 +79,5 @@ private:
     std::map<std::string, int> materialMap; // name -> index
     std::vector<std::unique_ptr<Texture>> textures;
     BVH bvh;
+    AABB sceneBounds;
 };

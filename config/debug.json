@@ -3,14 +3,10 @@
     "render": {
         "width": 800,
         "height": 600,
-        "samples": 64,
-        "maxDepth": 8,
-        "output": "output.ppm"
-    },
-    "camera": {
-        "position": [0, 2.0, 6],
-        "lookAt": [0, 0.5, 0],
-        "fov": 45
+        "samples": 1,
+        "maxDepth": 1,
+        "output": "debug_output.ppm",
+        "debug": true
     },
     "objects": [
         {
@@ -18,15 +14,6 @@
             "file": "assets/model/8610.obj",
             "position": [0, 0, 0],
             "scale": 1.0
-        },
-        {
-            "type": "plane",
-            "position": [0, -0.1, 0],
-            "scale": 50.0,
-            "material": "glass",
-            "color": [0.1, 0.2, 0.4],
-            "ior": 1.33,
-            "opacity": 0.3
         }
     ],
     "lighting": {

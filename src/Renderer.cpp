@@ -4,6 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <atomic>
+#include <utility>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -11,6 +12,12 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+namespace {
+void printVec3(const char* label, const Vec3f& v) {
+    std::cout << label << " = (" << v.x << ", " << v.y << ", " << v.z << ")" << std::endl;
+}
+}
 
 void Renderer::render(const Scene& scene) {
     int width = scene.config.width;
@@ -24,12 +31,35 @@ void Renderer::render(const Scene& scene) {
     float fov = scene.config.fov;
 
     Vec3f forward = (target - eye).normalized();
-    Vec3f worldUp(0, 1, 0);
-    Vec3f right = cross(forward, worldUp).normalized();
+    Vec3f upHint = scene.config.cameraUp.length2() > 1e-8f ? scene.config.cameraUp.normalized() : Vec3f(0, 1, 0);
+    Vec3f right = scene.config.cameraRight.length2() > 1e-8f
+        ? scene.config.cameraRight.normalized()
+        : cross(forward, upHint).normalized();
+    if (right.length2() < 1e-8f) {
+        right = cross(forward, Vec3f(0, 0, 1)).normalized();
+    }
     Vec3f up = cross(right, forward).normalized();
+    if (dot(up, upHint) < 0.0f) {
+        right = -right;
+        up = -up;
+    }
 
     float scale = std::tan(fov * 0.5f * (float)M_PI / 180.0f);
     float aspectRatio = (float)width / (float)height;
+
+    Vec3f sceneCenter = scene.bounds().centroid();
+    float cameraDistance = (sceneCenter - eye).length();
+    printVec3("Camera position", eye);
+    printVec3("Camera forward", forward);
+    printVec3("Camera up", up);
+    std::cout << "Camera distance to scene center = " << cameraDistance << std::endl;
+
+    if (scene.config.debugMode) {
+        std::cout << "Rendering debug axes/bounding-box view..." << std::endl;
+        renderDebugView(scene, framebuffer, width, height, eye, right, up, forward, scale, aspectRatio);
+        writePPM(scene.config.outputFile, framebuffer, width, height);
+        return;
+    }
 
     std::cout << "Rendering " << width << "x" << height << " @ " << spp << " spp..." << std::endl;
 
@@ -65,6 +95,87 @@ void Renderer::render(const Scene& scene) {
     std::cout << "\nRendering complete." << std::endl;
 
     writePPM(scene.config.outputFile, framebuffer, width, height);
+}
+
+void Renderer::renderDebugView(const Scene& scene, std::vector<Vec3f>& framebuffer,
+                                int width, int height, const Vec3f& eye,
+                                const Vec3f& right, const Vec3f& up,
+                                const Vec3f& forward, float scale,
+                                float aspectRatio) {
+    std::fill(framebuffer.begin(), framebuffer.end(), Vec3f(0.04f, 0.045f, 0.055f));
+
+    auto project = [&](const Vec3f& p, int& sx, int& sy) {
+        Vec3f rel = p - eye;
+        float z = dot(rel, forward);
+        if (z <= 1e-4f) return false;
+
+        float ndcX = dot(rel, right) / (z * aspectRatio * scale);
+        float ndcY = dot(rel, up) / (z * scale);
+        sx = (int)((ndcX * 0.5f + 0.5f) * (float)(width - 1));
+        sy = (int)((0.5f - ndcY * 0.5f) * (float)(height - 1));
+        return sx >= -width && sx <= width * 2 && sy >= -height && sy <= height * 2;
+    };
+
+    auto putPixel = [&](int x, int y, const Vec3f& color) {
+        if (x < 0 || x >= width || y < 0 || y >= height) return;
+        framebuffer[y * width + x] = color;
+    };
+
+    auto drawLine2D = [&](int x0, int y0, int x1, int y1, const Vec3f& color) {
+        int dx = std::abs(x1 - x0);
+        int sx = x0 < x1 ? 1 : -1;
+        int dy = -std::abs(y1 - y0);
+        int sy = y0 < y1 ? 1 : -1;
+        int err = dx + dy;
+        while (true) {
+            putPixel(x0, y0, color);
+            if (x0 == x1 && y0 == y1) break;
+            int e2 = 2 * err;
+            if (e2 >= dy) {
+                err += dy;
+                x0 += sx;
+            }
+            if (e2 <= dx) {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    };
+
+    auto drawLine3D = [&](const Vec3f& a, const Vec3f& b, const Vec3f& color) {
+        int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        if (!project(a, x0, y0) || !project(b, x1, y1)) return;
+        drawLine2D(x0, y0, x1, y1, color);
+    };
+
+    AABB bounds = scene.bounds();
+    Vec3f center = bounds.centroid();
+    Vec3f size = bounds.extent();
+    float axisLen = std::max({size.x, size.y, size.z, 1.0f}) * 0.35f;
+
+    drawLine3D(Vec3f(0), Vec3f(axisLen, 0, 0), Vec3f(1, 0.1f, 0.1f));
+    drawLine3D(Vec3f(0), Vec3f(0, axisLen, 0), Vec3f(0.1f, 1, 0.1f));
+    drawLine3D(Vec3f(0), Vec3f(0, 0, axisLen), Vec3f(0.1f, 0.35f, 1));
+
+    Vec3f mn = bounds.min_p;
+    Vec3f mx = bounds.max_p;
+    Vec3f corners[8] = {
+        {mn.x, mn.y, mn.z}, {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mn.x, mx.y, mn.z},
+        {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}
+    };
+    int edges[12][2] = {
+        {0, 1}, {1, 2}, {2, 3}, {3, 0},
+        {4, 5}, {5, 6}, {6, 7}, {7, 4},
+        {0, 4}, {1, 5}, {2, 6}, {3, 7}
+    };
+    for (auto& edge : edges) {
+        drawLine3D(corners[edge[0]], corners[edge[1]], Vec3f(1.0f, 0.9f, 0.2f));
+    }
+
+    float crossLen = axisLen * 0.05f;
+    drawLine3D(center - Vec3f(crossLen, 0, 0), center + Vec3f(crossLen, 0, 0), Vec3f(1));
+    drawLine3D(center - Vec3f(0, crossLen, 0), center + Vec3f(0, crossLen, 0), Vec3f(1));
+    drawLine3D(center - Vec3f(0, 0, crossLen), center + Vec3f(0, 0, crossLen), Vec3f(1));
 }
 
 void Renderer::writePPM(const std::string& filename, const std::vector<Vec3f>& framebuffer,

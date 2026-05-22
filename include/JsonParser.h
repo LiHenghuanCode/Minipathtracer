@@ -2,9 +2,9 @@
 #include "Scene.h"
 #include <string>
 
-// Minimal JSON parser for the path tracer config
-// Only supports the fixed structure we need:
-//   { "render": {...}, "camera": {...}, "objects": [...], "lighting": {...}, "sky": {...} }
+// Minimal JSON parser for the path tracer config.
+// Supports the native renderer config plus Blender-exported "cameras" and
+// "lights" arrays, either inline or through a "sceneData" file reference.
 class JsonParser {
 public:
     static SceneConfig parse(const std::string& filename);
@@ -34,11 +34,18 @@ private:
     static void parseObjects(Lexer& lex, SceneConfig& cfg);
     static void parseLighting(Lexer& lex, SceneConfig& cfg);
     static void parseSky(Lexer& lex, SceneConfig& cfg);
+    static void parseCameras(Lexer& lex, SceneConfig& cfg);
+    static void parseLights(Lexer& lex, SceneConfig& cfg);
     static void parseObject(Lexer& lex, SceneConfig::ObjectEntry& obj);
 
     static float expectNumber(Lexer& lex);
+    static bool expectBool(Lexer& lex);
     static std::string expectString(Lexer& lex);
     static void expectToken(Lexer& lex, Token::Type type);
     static Vec3f parseVec3(Lexer& lex);
+    static void parseMatrix4(Lexer& lex, float matrix[4][4]);
+    static Vec3f blenderToRendererPoint(const Vec3f& v);
+    static Vec3f blenderToRendererVector(const Vec3f& v);
+    static void parseInto(const std::string& filename, SceneConfig& cfg);
     static void skipValue(Lexer& lex);
 };
