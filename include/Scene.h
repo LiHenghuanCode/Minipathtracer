@@ -10,10 +10,26 @@
 #include <memory>
 #include <map>
 
-struct DirectionalLight {
-    Vec3f direction; // normalized, pointing toward light
-    Vec3f color;
-    float intensity;
+struct AreaLightSource {
+    Vec3f center;
+    Vec3f normal;
+    Vec3f u, v;
+    float halfWidth;
+    float halfHeight;
+    Vec3f emission;
+    int materialId = -1;
+
+    Vec3f samplePoint() const {
+        float r = std::sqrt(random_float());
+        float theta = 2.0f * 3.14159265358979323846f * random_float();
+        float x = std::cos(theta) * r * halfWidth;
+        float y = std::sin(theta) * r * halfHeight;
+        return center + u * x + v * y;
+    }
+
+    float area() const {
+        return 3.14159265358979323846f * halfWidth * halfHeight;
+    }
 };
 
 struct SceneConfig {
@@ -32,7 +48,16 @@ struct SceneConfig {
     bool debugMode = false;
 
     // Lighting
-    DirectionalLight sun;
+    struct AreaLightConfig {
+        Vec3f position = Vec3f(0, 10, 0);
+        Vec3f direction = Vec3f(0, -1, 0);
+        float width = 5.0f;
+        float height = 5.0f;
+        Vec3f color = Vec3f(1.0f, 0.9f, 0.7f);
+        float intensity = 100.0f;
+    };
+    AreaLightConfig areaLightConfig;
+    bool hasAreaLight = false;
     Vec3f skyColorTop = Vec3f(0.2f, 0.3f, 0.8f);
     Vec3f skyColorBottom = Vec3f(1.0f, 0.6f, 0.3f);
 
@@ -47,9 +72,7 @@ struct SceneConfig {
         std::string materialType = "";
         Vec3f materialColor = Vec3f(-1); // -1 = use MTL
         float roughness = -1;
-        float metallic = -1;
         float ior = -1;
-        float opacity = -1;
         bool convertFromBlender = false;
     };
     std::vector<ObjectEntry> objects;
@@ -70,7 +93,10 @@ public:
 private:
     void loadOBJ(const SceneConfig::ObjectEntry& entry);
     void addPlane(const SceneConfig::ObjectEntry& entry);
+    void createAreaLight();
     void buildBVH();
+    Vec3f sampleAreaLight(const Vec3f& hitPoint, const Vec3f& N, const Material& mat,
+                          float texU, float texV) const;
 
     // Sky color based on ray direction
     Vec3f skyColor(const Vec3f& direction) const;
@@ -80,6 +106,8 @@ private:
     std::map<std::string, int> materialMap; // name -> index
     std::vector<std::unique_ptr<Texture>> textures;
     std::unique_ptr<Ocean> ocean;
+    AreaLightSource areaLight;
+    bool hasAreaLight = false;
     BVH bvh;
     AABB sceneBounds;
 };

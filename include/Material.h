@@ -28,9 +28,7 @@ struct Material {
     Vec3f color = Vec3f(0.8f);      // base color / albedo
     Vec3f emission = Vec3f(0);       // emissive color
     float roughness = 1.0f;          // 0 = mirror, 1 = rough
-    float metallic = 0.0f;
     float ior = 1.5f;                // index of refraction
-    float opacity = 1.0f;            // 1 = opaque
     Vec3f absorptionColor = Vec3f(0.2f, 0.05f, 0.01f);
     Texture* texture = nullptr;      // diffuse texture (not owned)
 

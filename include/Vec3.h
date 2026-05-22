@@ -57,30 +57,6 @@ inline Vec3f reflect(const Vec3f& I, const Vec3f& N) {
     return I - 2.0f * dot(I, N) * N;
 }
 
-inline Vec3f refract(const Vec3f& I, const Vec3f& N, float eta) {
-    float cosi = std::clamp(-dot(I, N), -1.0f, 1.0f);
-    float etai = 1.0f, etat = eta;
-    Vec3f n = N;
-    if (cosi < 0) { cosi = -cosi; std::swap(etai, etat); n = -N; }
-    float ratio = etai / etat;
-    float k = 1.0f - ratio * ratio * (1.0f - cosi * cosi);
-    if (k < 0) return {0, 0, 0};
-    return ratio * I + (ratio * cosi - std::sqrt(k)) * n;
-}
-
-inline float fresnel_exact(const Vec3f& I, const Vec3f& N, float ior) {
-    float cosi = std::clamp(dot(I, N), -1.0f, 1.0f);
-    float etai = 1.0f, etat = ior;
-    if (cosi > 0) std::swap(etai, etat);
-    float sint = etai / etat * std::sqrt(std::max(0.0f, 1.0f - cosi * cosi));
-    if (sint >= 1.0f) return 1.0f;
-    float cost = std::sqrt(std::max(0.0f, 1.0f - sint * sint));
-    cosi = std::fabs(cosi);
-    float Rs = ((etat * cosi) - (etai * cost)) / ((etat * cosi) + (etai * cost));
-    float Rp = ((etai * cosi) - (etat * cost)) / ((etai * cosi) + (etat * cost));
-    return (Rs * Rs + Rp * Rp) / 2.0f;
-}
-
 struct Ray {
     Vec3f origin, direction;
     Ray() {}

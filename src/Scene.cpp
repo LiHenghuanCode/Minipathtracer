@@ -24,6 +24,7 @@ void Scene::loadFromConfig(const SceneConfig& cfg) {
     materials.clear();
     materialMap.clear();
     textures.clear();
+    hasAreaLight = false;
     sceneBounds = AABB{};
 
     for (auto& entry : config.objects) {
@@ -43,6 +44,10 @@ void Scene::loadFromConfig(const SceneConfig& cfg) {
         printVec3("OBJ bounding box max", sceneBounds.max_p);
         printVec3("OBJ bounding box center", sceneBounds.centroid());
         printVec3("OBJ bounding box size", sceneBounds.extent());
+    }
+
+    if (config.hasAreaLight) {
+        createAreaLight();
     }
 
     buildBVH();
@@ -80,7 +85,6 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
                    (entry.materialType.empty() && mtl.d < 0.9f && mtl.illum >= 4)) {
             mat.type = MaterialType::DIELECTRIC;
             mat.ior = mtl.Ni > 0.1f ? mtl.Ni : 1.5f;
-            mat.opacity = mtl.d;
         } else if (entry.materialType == "emissive") {
             mat.type = MaterialType::EMISSIVE;
             mat.emission = mat.color * 10.0f;
@@ -91,9 +95,7 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
         // JSON overrides
         if (entry.materialColor.x >= 0) mat.color = entry.materialColor;
         if (entry.roughness >= 0) mat.roughness = entry.roughness;
-        if (entry.metallic >= 0) mat.metallic = entry.metallic;
         if (entry.ior >= 0) mat.ior = entry.ior;
-        if (entry.opacity >= 0) mat.opacity = entry.opacity;
 
         // Load diffuse texture
         if (!mtl.map_Kd.empty()) {
@@ -176,7 +178,6 @@ void Scene::addPlane(const SceneConfig::ObjectEntry& entry) {
     if (entry.materialType == "glass" || entry.materialType == "dielectric") {
         mat.type = MaterialType::DIELECTRIC;
         mat.ior = entry.ior >= 0 ? entry.ior : 1.33f; // water default
-        mat.opacity = entry.opacity >= 0 ? entry.opacity : 0.3f;
         mat.color = entry.materialColor.x >= 0 ? entry.materialColor : Vec3f(0.1f, 0.2f, 0.4f);
     } else if (entry.materialType == "metal") {
         mat.type = MaterialType::METAL;
@@ -221,21 +222,111 @@ void Scene::buildBVH() {
     bvh.build(triangles);
 }
 
+void Scene::createAreaLight() {
+    auto& cfg = config.areaLightConfig;
+
+    Vec3f dir = cfg.direction.normalized();
+    Vec3f up = (std::fabs(dir.y) < 0.99f) ? Vec3f(0, 1, 0) : Vec3f(1, 0, 0);
+    Vec3f right = cross(up, dir).normalized();
+    up = cross(dir, right).normalized();
+
+    areaLight.center = cfg.position;
+    areaLight.normal = -dir;
+    areaLight.u = right;
+    areaLight.v = up;
+    areaLight.halfWidth = cfg.width * 0.5f;
+    areaLight.halfHeight = cfg.height * 0.5f;
+    areaLight.emission = cfg.color * cfg.intensity;
+
+    Material emitMat;
+    emitMat.type = MaterialType::EMISSIVE;
+    emitMat.emission = areaLight.emission;
+    emitMat.color = cfg.color;
+    areaLight.materialId = (int)materials.size();
+    materials.push_back(emitMat);
+
+    constexpr int segments = 48;
+
+    for (int i = 0; i < segments; ++i) {
+        float a0 = 2.0f * 3.14159265358979323846f * (float)i / (float)segments;
+        float a1 = 2.0f * 3.14159265358979323846f * (float)(i + 1) / (float)segments;
+
+        Vec3f rim0 = areaLight.center
+            + right * (std::cos(a0) * areaLight.halfWidth)
+            + up * (std::sin(a0) * areaLight.halfHeight);
+        Vec3f rim1 = areaLight.center
+            + right * (std::cos(a1) * areaLight.halfWidth)
+            + up * (std::sin(a1) * areaLight.halfHeight);
+
+        Triangle tri;
+        tri.v0 = areaLight.center;
+        tri.v1 = rim0;
+        tri.v2 = rim1;
+        tri.n0 = tri.n1 = tri.n2 = areaLight.normal;
+        tri.u0 = 0.5f; tri.v0t = 0.5f;
+        tri.u1 = 0.5f + 0.5f * std::cos(a0); tri.v1t = 0.5f + 0.5f * std::sin(a0);
+        tri.u2 = 0.5f + 0.5f * std::cos(a1); tri.v2t = 0.5f + 0.5f * std::sin(a1);
+        tri.materialId = areaLight.materialId;
+        triangles.push_back(tri);
+    }
+
+    hasAreaLight = true;
+    std::cout << "Area light created at (" << areaLight.center.x << ", "
+              << areaLight.center.y << ", " << areaLight.center.z
+              << ") size=" << cfg.width << "x" << cfg.height
+              << " emission=(" << areaLight.emission.x << ", "
+              << areaLight.emission.y << ", " << areaLight.emission.z << ")" << std::endl;
+}
+
+Vec3f Scene::sampleAreaLight(const Vec3f& hitPoint, const Vec3f& N, const Material& mat,
+                             float texU, float texV) const {
+    Vec3f lightPoint = areaLight.samplePoint();
+    Vec3f toLight = lightPoint - hitPoint;
+    float dist2 = toLight.length2();
+    float dist = std::sqrt(dist2);
+    Vec3f lightDir = toLight / dist;
+
+    float lightCos = dot(-lightDir, areaLight.normal);
+    if (lightCos <= 0.0f) return Vec3f(0);
+
+    float surfaceCos = dot(lightDir, N);
+    if (surfaceCos <= 0.0f) return Vec3f(0);
+
+    Ray shadowRay(hitPoint + N * 1e-3f, lightDir);
+    Intersection shadowIsect = bvh.intersect(shadowRay);
+    if (shadowIsect.hit && shadowIsect.t < dist - 1e-2f) {
+        return Vec3f(0);
+    }
+
+    Vec3f brdf = mat.eval(Vec3f(0), lightDir, N, texU, texV);
+    float geometryTerm = surfaceCos * lightCos / dist2;
+    return areaLight.emission * brdf * geometryTerm * areaLight.area();
+}
+
 Vec3f Scene::skyColor(const Vec3f& direction) const {
-    // Gradient sky: lerp between bottom and top based on y component
-    float t = std::clamp(direction.y * 0.5f + 0.5f, 0.0f, 1.0f);
+    Vec3f dir = direction.normalized();
+
+    float t = std::clamp(dir.y * 0.5f + 0.5f, 0.0f, 1.0f);
     Vec3f sky = config.skyColorBottom * (1.0f - t) + config.skyColorTop * t;
 
-    // Sun disk
-    Vec3f sunDir = (-config.sun.direction).normalized();
-    float sunDot = dot(direction, sunDir);
-    if (sunDot > 0.995f) {
-        // Sun disk
-        sky = sky + config.sun.color * config.sun.intensity * 2.0f;
-    } else if (sunDot > 0.98f) {
-        // Sun glow
-        float glow = (sunDot - 0.98f) / (0.995f - 0.98f);
-        sky = sky + config.sun.color * config.sun.intensity * 0.5f * glow;
+    Vec3f sunDir = hasAreaLight ? areaLight.normal : Vec3f(0.0f, 0.0f, 1.0f);
+    float sunDot = dot(dir, sunDir);
+
+    float horizonGlow = std::exp(-std::abs(dir.y) * 4.0f);
+    sky = sky + config.skyColorBottom * horizonGlow * 0.3f;
+
+    if (sunDot > 0.0f) {
+        float wideGlow = std::pow(sunDot, 2.0f);
+        sky = sky + Vec3f(0.8f, 0.4f, 0.15f) * wideGlow * 0.5f;
+
+        float midGlow = std::pow(sunDot, 8.0f);
+        sky = sky + Vec3f(1.0f, 0.6f, 0.2f) * midGlow * 1.5f;
+
+        float narrowGlow = std::pow(sunDot, 32.0f);
+        sky = sky + Vec3f(1.0f, 0.8f, 0.4f) * narrowGlow * 3.0f;
+
+        float tightGlow = std::pow(sunDot, 128.0f);
+        sky = sky + Vec3f(1.0f, 0.95f, 0.8f) * tightGlow * 5.0f;
     }
 
     return sky;
@@ -278,19 +369,11 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
         N = -N;
     }
 
-    // Direct lighting from sun (for diffuse/metal)
+    // Direct lighting (NEE)
     Vec3f directLight(0);
     if (mat.type == MaterialType::DIFFUSE || mat.type == MaterialType::METAL) {
-        Vec3f lightDir = (-config.sun.direction).normalized();
-        float NdotL = dot(N, lightDir);
-        if (NdotL > 0) {
-            // Shadow ray
-            Ray shadowRay(hitPoint + N * 1e-3f, lightDir);
-            Intersection shadowIsect = bvh.intersect(shadowRay);
-            if (!shadowIsect.hit) {
-                Vec3f brdf = mat.eval(ray.direction, lightDir, N, isect.texU, isect.texV);
-                directLight = config.sun.color * config.sun.intensity * brdf * NdotL;
-            }
+        if (hasAreaLight) {
+            directLight = sampleAreaLight(hitPoint, N, mat, isect.texU, isect.texV);
         }
     }
 
@@ -312,6 +395,11 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
     Ray bounceRay(hitPoint + offset, wo);
     Intersection bounceIsect = bvh.intersect(bounceRay);
     Vec3f indirect = castRay(bounceRay, depth + 1);
+    if (hasAreaLight && mat.type == MaterialType::DIFFUSE && bounceIsect.hit) {
+        if (bounceIsect.materialId == areaLight.materialId) {
+            indirect = Vec3f(0);
+        }
+    }
 
     bool enteringWater = mat.type == MaterialType::DIELECTRIC &&
                          dot(ray.direction, isect.normal) < 0.0f &&
