@@ -2,11 +2,107 @@
 #include "OBJ_Loader.h"
 #include <iostream>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <string>
 
 namespace {
 void printVec3(const char* label, const Vec3f& v) {
     std::cout << label << " = (" << v.x << ", " << v.y << ", " << v.z << ")" << std::endl;
+}
+
+const char* materialTypeName(MaterialType type) {
+    switch (type) {
+        case MaterialType::DIFFUSE: return "DIFFUSE";
+        case MaterialType::METAL: return "METAL";
+        case MaterialType::DIELECTRIC: return "DIELECTRIC";
+        case MaterialType::EMISSIVE: return "EMISSIVE";
+    }
+    return "UNKNOWN";
+}
+
+const std::string& mapNameOrNone(const std::string& name) {
+    static const std::string none = "<none>";
+    return name.empty() ? none : name;
+}
+
+float roughnessFromNs(float ns) {
+    float roughness = std::sqrt(2.0f / (ns + 2.0f));
+    return std::clamp(roughness, 0.02f, 1.0f);
+}
+
+float glossyWeightFromKs(const Vec3f& ks) {
+    return std::clamp(ks.max_component() * 0.35f, 0.0f, 0.35f);
+}
+
+Vec3f sanitizeRadiance(const Vec3f& v) {
+    if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) {
+        return Vec3f(0.0f);
+    }
+    constexpr float maxRadiance = 100.0f;
+    return Vec3f(std::clamp(v.x, 0.0f, maxRadiance),
+                 std::clamp(v.y, 0.0f, maxRadiance),
+                 std::clamp(v.z, 0.0f, maxRadiance));
+}
+
+void printObjMaterialLog(const objl::Material& mtl, const Material& mat) {
+    std::cout << "OBJ material '" << mtl.name << "': "
+              << "Kd=(" << mtl.Kd.X << ", " << mtl.Kd.Y << ", " << mtl.Kd.Z << "), "
+              << "Ks=(" << mtl.Ks.X << ", " << mtl.Ks.Y << ", " << mtl.Ks.Z << "), "
+              << "originalNs=" << mtl.Ns << ", "
+              << "roughnessFromNs=";
+    if (mat.roughnessFromNs >= 0.0f) {
+        std::cout << mat.roughnessFromNs;
+    } else {
+        std::cout << "<none>";
+    }
+    std::cout << ", "
+              << "finalRoughness=" << mat.roughness << ", "
+              << "jsonRoughnessOverride=" << (mat.usedJsonRoughnessOverride ? "yes" : "no") << ", "
+              << "metallicBase=" << mat.metallicBase << ", "
+              << "finalMetallic=" << mat.metallic << ", "
+              << "jsonMetallicOverride=" << (mat.usedJsonMetallicOverride ? "yes" : "no") << ", "
+              << "specularColor=(" << mat.specularColor.x << ", " << mat.specularColor.y << ", " << mat.specularColor.z << "), "
+              << "glossyWeightBase=" << mat.glossyWeightBase << ", "
+              << "finalGlossyWeight=" << mat.glossyWeight << ", "
+              << "finalSpecularBoost=" << mat.specularBoost << ", "
+              << "glossyWeightSource=" << (mat.usedJsonGlossyWeightOverride ? "JSON" : "Ks") << ", "
+              << "illum=" << mtl.illum << ", "
+              << "map_Kd=" << mapNameOrNone(mtl.map_Kd) << ", "
+              << "map_Ks=" << mapNameOrNone(mtl.map_Ks) << ", "
+              << "map_Ns=" << mapNameOrNone(mtl.map_Ns) << ", "
+              << "map_bump=" << mapNameOrNone(mtl.map_bump) << std::endl;
+
+    std::cout << "  converted Material: "
+              << "type=" << materialTypeName(mat.type) << ", "
+              << "color=(" << mat.color.x << ", " << mat.color.y << ", " << mat.color.z << "), "
+              << "roughness=" << mat.roughness << ", "
+              << "mtlNs=" << mat.mtlNs << ", "
+              << "roughnessFromNs=" << mat.roughnessFromNs << ", "
+              << "jsonRoughnessOverride=" << (mat.usedJsonRoughnessOverride ? "yes" : "no") << ", "
+              << "metallicBase=" << mat.metallicBase << ", "
+              << "metallic=" << mat.metallic << ", "
+              << "jsonMetallicOverride=" << (mat.usedJsonMetallicOverride ? "yes" : "no") << ", "
+              << "specularColor=(" << mat.specularColor.x << ", " << mat.specularColor.y << ", " << mat.specularColor.z << "), "
+              << "glossyWeight=" << mat.glossyWeight << ", "
+              << "specularBoost=" << mat.specularBoost << ", "
+              << "glossyWeightSource=" << (mat.usedJsonGlossyWeightOverride ? "JSON" : "Ks") << ", "
+              << "ior=" << mat.ior << ", "
+              << "emission=(" << mat.emission.x << ", " << mat.emission.y << ", " << mat.emission.z << "), "
+              << "diffuseTexture=" << ((mat.texture && mat.texture->isLoaded()) ? "loaded" : "none")
+              << std::endl;
+}
+
+void printObjectMaterialLog(const char* label, const Material& mat) {
+    std::cout << label << " material: "
+              << "type=" << materialTypeName(mat.type) << ", "
+              << "specularColor=(" << mat.specularColor.x << ", " << mat.specularColor.y << ", " << mat.specularColor.z << "), "
+              << "finalGlossyWeight=" << mat.glossyWeight << ", "
+              << "finalSpecularBoost=" << mat.specularBoost << ", "
+              << "glossyWeightSource=" << (mat.usedJsonGlossyWeightOverride ? "JSON" : "default/Ks") << ", "
+              << "roughness=" << mat.roughness << ", "
+              << "metallic=" << mat.metallic
+              << std::endl;
 }
 
 Vec3f blenderToRendererPoint(const Vec3f& v) {
@@ -75,12 +171,17 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
     for (auto& mtl : loader.LoadedMaterials) {
         Material mat;
         mat.color = Vec3f(mtl.Kd.X, mtl.Kd.Y, mtl.Kd.Z);
+        mat.mtlNs = mtl.Ns;
+        mat.specularColor = Vec3f(mtl.Ks.X, mtl.Ks.Y, mtl.Ks.Z);
+        mat.glossyWeightBase = glossyWeightFromKs(mat.specularColor);
+        mat.glossyWeight = mat.glossyWeightBase;
 
         // Auto-detect material type from MTL fields
         if (entry.materialType == "metal" ||
             (entry.materialType.empty() && mtl.illum >= 3 && mtl.Ks.X + mtl.Ks.Y + mtl.Ks.Z > 0.5f)) {
             mat.type = MaterialType::METAL;
-            mat.roughness = 1.0f - std::clamp(mtl.Ns / 1000.0f, 0.0f, 1.0f);
+            mat.metallicBase = 1.0f;
+            mat.metallic = mat.metallicBase;
         } else if (entry.materialType == "glass" ||
                    (entry.materialType.empty() && mtl.d < 0.9f && mtl.illum >= 4)) {
             mat.type = MaterialType::DIELECTRIC;
@@ -92,9 +193,27 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
             mat.type = MaterialType::DIFFUSE;
         }
 
+        if (std::isfinite(mtl.Ns) && mtl.Ns > 0.0f &&
+            (mat.type == MaterialType::DIFFUSE || mat.type == MaterialType::METAL)) {
+            mat.roughnessFromNs = roughnessFromNs(mtl.Ns);
+            mat.roughness = mat.roughnessFromNs;
+        }
+
         // JSON overrides
         if (entry.materialColor.x >= 0) mat.color = entry.materialColor;
-        if (entry.roughness >= 0) mat.roughness = entry.roughness;
+        if (entry.roughness >= 0) {
+            mat.roughness = entry.roughness;
+            mat.usedJsonRoughnessOverride = true;
+        }
+        if (entry.metallic >= 0) {
+            mat.metallic = std::clamp(entry.metallic, 0.0f, 1.0f);
+            mat.usedJsonMetallicOverride = true;
+        }
+        if (entry.glossyWeight >= 0) {
+            mat.glossyWeight = std::clamp(entry.glossyWeight, 0.0f, 0.8f);
+            mat.usedJsonGlossyWeightOverride = true;
+        }
+        mat.specularBoost = std::clamp(entry.specularBoost, 0.0f, 4.0f);
         if (entry.ior >= 0) mat.ior = entry.ior;
 
         // Load diffuse texture
@@ -110,6 +229,8 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
             }
         }
 
+        printObjMaterialLog(mtl, mat);
+
         materialMap[mtl.name] = (int)materials.size();
         materials.push_back(mat);
     }
@@ -122,9 +243,22 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
         if (entry.materialType == "metal") defaultMat.type = MaterialType::METAL;
         else if (entry.materialType == "glass") defaultMat.type = MaterialType::DIELECTRIC;
         else if (entry.materialType == "emissive") defaultMat.type = MaterialType::EMISSIVE;
+        if (defaultMat.type == MaterialType::METAL) {
+            defaultMat.metallicBase = 1.0f;
+            defaultMat.metallic = defaultMat.metallicBase;
+        }
 
         if (entry.materialColor.x >= 0) defaultMat.color = entry.materialColor;
         if (entry.roughness >= 0) defaultMat.roughness = entry.roughness;
+        if (entry.metallic >= 0) {
+            defaultMat.metallic = std::clamp(entry.metallic, 0.0f, 1.0f);
+            defaultMat.usedJsonMetallicOverride = true;
+        }
+        if (entry.glossyWeight >= 0) {
+            defaultMat.glossyWeight = std::clamp(entry.glossyWeight, 0.0f, 0.8f);
+            defaultMat.usedJsonGlossyWeightOverride = true;
+        }
+        defaultMat.specularBoost = std::clamp(entry.specularBoost, 0.0f, 4.0f);
         if (entry.ior >= 0) defaultMat.ior = entry.ior;
 
         materialMap["_default"] = (int)materials.size();
@@ -181,12 +315,25 @@ void Scene::addPlane(const SceneConfig::ObjectEntry& entry) {
         mat.color = entry.materialColor.x >= 0 ? entry.materialColor : Vec3f(0.1f, 0.2f, 0.4f);
     } else if (entry.materialType == "metal") {
         mat.type = MaterialType::METAL;
+        mat.metallicBase = 1.0f;
+        mat.metallic = mat.metallicBase;
         mat.roughness = entry.roughness >= 0 ? entry.roughness : 0.1f;
         mat.color = entry.materialColor.x >= 0 ? entry.materialColor : Vec3f(0.8f);
     } else {
         mat.type = MaterialType::DIFFUSE;
         mat.color = entry.materialColor.x >= 0 ? entry.materialColor : Vec3f(0.5f);
     }
+    if (entry.metallic >= 0) {
+        mat.metallic = std::clamp(entry.metallic, 0.0f, 1.0f);
+        mat.usedJsonMetallicOverride = true;
+    }
+    if (entry.glossyWeight >= 0) {
+        mat.glossyWeight = std::clamp(entry.glossyWeight, 0.0f, 0.8f);
+        mat.usedJsonGlossyWeightOverride = true;
+    }
+    mat.specularBoost = std::clamp(entry.specularBoost, 0.0f, 4.0f);
+
+    printObjectMaterialLog("Plane", mat);
 
     int matId = (int)materials.size();
     materials.push_back(mat);
@@ -278,7 +425,47 @@ void Scene::createAreaLight() {
               << areaLight.emission.y << ", " << areaLight.emission.z << ")" << std::endl;
 }
 
-Vec3f Scene::sampleAreaLight(const Vec3f& hitPoint, const Vec3f& N, const Material& mat,
+Vec3f Scene::materialDebugColor(const Material& mat, const Vec3f& normal,
+                                float texU, float texV) const {
+    const std::string& mode = config.materialDebug;
+
+    if (mode == "debugBaseColor") {
+        return mat.getColor(texU, texV);
+    }
+
+    if (mode == "debugRoughness") {
+        float r = std::clamp(mat.roughness, 0.0f, 1.0f);
+        return Vec3f(r);
+    }
+
+    if (mode == "debugMetallic") {
+        float metallic = std::clamp(mat.metallic, 0.0f, 1.0f);
+        return Vec3f(metallic);
+    }
+
+    if (mode == "debugGlossyWeight") {
+        float glossy = std::clamp(mat.glossyWeight, 0.0f, 1.0f);
+        return Vec3f(glossy);
+    }
+
+    if (mode == "debugNormal") {
+        Vec3f n = normal.normalized();
+        return Vec3f(n.x * 0.5f + 0.5f, n.y * 0.5f + 0.5f, n.z * 0.5f + 0.5f);
+    }
+
+    if (mode == "debugMaterialType") {
+        switch (mat.type) {
+            case MaterialType::DIFFUSE: return Vec3f(0.45f, 0.8f, 0.45f);
+            case MaterialType::METAL: return Vec3f(0.35f, 0.55f, 1.0f);
+            case MaterialType::DIELECTRIC: return Vec3f(0.35f, 0.95f, 1.0f);
+            case MaterialType::EMISSIVE: return Vec3f(1.0f, 0.85f, 0.2f);
+        }
+    }
+
+    return Vec3f(1.0f, 0.0f, 1.0f);
+}
+
+Vec3f Scene::sampleAreaLight(const Vec3f& hitPoint, const Vec3f& wi, const Vec3f& N, const Material& mat,
                              float texU, float texV) const {
     Vec3f lightPoint = areaLight.samplePoint();
     Vec3f toLight = lightPoint - hitPoint;
@@ -298,7 +485,7 @@ Vec3f Scene::sampleAreaLight(const Vec3f& hitPoint, const Vec3f& N, const Materi
         return Vec3f(0);
     }
 
-    Vec3f brdf = mat.eval(Vec3f(0), lightDir, N, texU, texV);
+    Vec3f brdf = mat.eval(wi, lightDir, N, texU, texV);
     float geometryTerm = surfaceCos * lightCos / dist2;
     return areaLight.emission * brdf * geometryTerm * areaLight.area();
 }
@@ -343,6 +530,17 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
 
     const Material& mat = materials[isect.materialId];
 
+    if (config.materialDebug != "none") {
+        Vec3f N = isect.normal;
+        if (mat.type == MaterialType::DIELECTRIC && ocean) {
+            N = ocean->getNormal(isect.position.x, isect.position.z);
+        }
+        if (dot(N, ray.direction) > 0 && mat.type != MaterialType::DIELECTRIC) {
+            N = -N;
+        }
+        return materialDebugColor(mat, N, isect.texU, isect.texV);
+    }
+
     // Emissive surface
     if (mat.hasEmission()) {
         return mat.emission;
@@ -373,7 +571,7 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
     Vec3f directLight(0);
     if (mat.type == MaterialType::DIFFUSE || mat.type == MaterialType::METAL) {
         if (hasAreaLight) {
-            directLight = sampleAreaLight(hitPoint, N, mat, isect.texU, isect.texV);
+            directLight = sampleAreaLight(hitPoint, ray.direction, N, mat, isect.texU, isect.texV);
         }
     }
 
@@ -423,5 +621,5 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
         result = directLight + brdf * indirect;
     }
 
-    return result / survivalProb;
+    return sanitizeRadiance(result / survivalProb);
 }

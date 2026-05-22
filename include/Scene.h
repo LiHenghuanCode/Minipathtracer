@@ -46,6 +46,7 @@ struct SceneConfig {
     Vec3f cameraUp = Vec3f(0, 1, 0);
     float fov = 45.0f;
     bool debugMode = false;
+    std::string materialDebug = "none";
 
     // Lighting
     struct AreaLightConfig {
@@ -72,6 +73,9 @@ struct SceneConfig {
         std::string materialType = "";
         Vec3f materialColor = Vec3f(-1); // -1 = use MTL
         float roughness = -1;
+        float metallic = -1;
+        float glossyWeight = -1;
+        float specularBoost = 1.0f;
         float ior = -1;
         bool convertFromBlender = false;
     };
@@ -95,7 +99,9 @@ private:
     void addPlane(const SceneConfig::ObjectEntry& entry);
     void createAreaLight();
     void buildBVH();
-    Vec3f sampleAreaLight(const Vec3f& hitPoint, const Vec3f& N, const Material& mat,
+    Vec3f materialDebugColor(const Material& mat, const Vec3f& normal,
+                             float texU, float texV) const;
+    Vec3f sampleAreaLight(const Vec3f& hitPoint, const Vec3f& wi, const Vec3f& N, const Material& mat,
                           float texU, float texV) const;
 
     // Sky color based on ray direction

@@ -1,6 +1,7 @@
 #pragma once
 #include "Vec3.h"
 #include "Texture.h"
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <memory>
@@ -27,7 +28,18 @@ struct Material {
     MaterialType type = MaterialType::DIFFUSE;
     Vec3f color = Vec3f(0.8f);      // base color / albedo
     Vec3f emission = Vec3f(0);       // emissive color
+    float metallic = 0.0f;           // 0 = non-metal, 1 = metal
+    float metallicBase = 0.0f;       // default/inferred metallic before JSON override
+    bool usedJsonMetallicOverride = false;
+    Vec3f specularColor = Vec3f(0.04f);
+    float specularBoost = 1.0f;
+    float glossyWeight = 0.0f;
+    float glossyWeightBase = 0.0f;
+    bool usedJsonGlossyWeightOverride = false;
     float roughness = 1.0f;          // 0 = mirror, 1 = rough
+    float mtlNs = -1.0f;             // original MTL specular exponent, if present
+    float roughnessFromNs = -1.0f;   // roughness fallback derived from mtlNs
+    bool usedJsonRoughnessOverride = false;
     float ior = 1.5f;                // index of refraction
     Vec3f absorptionColor = Vec3f(0.2f, 0.05f, 0.01f);
     Texture* texture = nullptr;      // diffuse texture (not owned)
@@ -41,6 +53,29 @@ struct Material {
             return texture->sample(u, v) * color;
         }
         return color;
+    }
+
+    static Vec3f safeNormalize(const Vec3f& v, const Vec3f& fallback = Vec3f(0, 1, 0)) {
+        float len2 = v.length2();
+        if (len2 < 1e-12f || !std::isfinite(len2)) return fallback;
+        return v / std::sqrt(len2);
+    }
+
+    float clampedRoughness() const {
+        return std::clamp(roughness, 0.02f, 1.0f);
+    }
+
+    float clampedGlossyWeight() const {
+        return std::clamp(glossyWeight, 0.0f, 0.8f);
+    }
+
+    float clampedSpecularBoost() const {
+        return std::clamp(specularBoost, 0.0f, 4.0f);
+    }
+
+    float glossyExponent() const {
+        float r = clampedRoughness();
+        return std::max(1.0f, 2.0f / (r * r) - 2.0f);
     }
 
     // Build local coordinate frame from normal
@@ -72,11 +107,46 @@ struct Material {
         return toWorld(local, N);
     }
 
+    static Vec3f sampleCosinePowerLobe(const Vec3f& axis, float exponent) {
+        float r1 = random_float();
+        float r2 = random_float();
+        float cosTheta = std::pow(r1, 1.0f / (exponent + 1.0f));
+        float sinTheta = std::sqrt(std::max(0.0f, 1.0f - cosTheta * cosTheta));
+        float phi = 2.0f * (float)M_PI * r2;
+        Vec3f local(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
+        return safeNormalize(toWorld(local, safeNormalize(axis)));
+    }
+
+    float diffusePdf(const Vec3f& wo, const Vec3f& N) const {
+        float cosTheta = dot(wo, N);
+        return cosTheta > 0.0f ? cosTheta / (float)M_PI : 0.0f;
+    }
+
+    float glossyPdf(const Vec3f& wi, const Vec3f& wo, const Vec3f& N) const {
+        Vec3f R = safeNormalize(reflect(wi, N), N);
+        if (dot(R, N) <= 0.0f) return 0.0f;
+        float cosAlpha = std::max(0.0f, dot(safeNormalize(wo), R));
+        if (cosAlpha <= 0.0f) return 0.0f;
+        float exponent = glossyExponent();
+        return (exponent + 1.0f) / (2.0f * (float)M_PI) * std::pow(cosAlpha, exponent);
+    }
+
     // Sample a scattered ray direction
     Vec3f sample(const Vec3f& wi, const Vec3f& N) const {
         switch (type) {
-            case MaterialType::DIFFUSE:
+            case MaterialType::DIFFUSE: {
+                float gw = clampedGlossyWeight();
+                if (gw > 0.0f && random_float() < gw) {
+                    Vec3f R = safeNormalize(reflect(wi, N), N);
+                    if (dot(R, N) > 0.0f) {
+                        Vec3f glossyDir = sampleCosinePowerLobe(R, glossyExponent());
+                        if (dot(glossyDir, N) > 1e-4f) {
+                            return glossyDir;
+                        }
+                    }
+                }
                 return sampleCosineHemisphere(N);
+            }
 
             case MaterialType::METAL: {
                 Vec3f reflected = reflect(wi, N);
@@ -130,8 +200,10 @@ struct Material {
     float pdf(const Vec3f& wi, const Vec3f& wo, const Vec3f& N) const {
         switch (type) {
             case MaterialType::DIFFUSE: {
-                float cosTheta = dot(wo, N);
-                return cosTheta > 0 ? cosTheta / (float)M_PI : 0.0f;
+                float gw = clampedGlossyWeight();
+                float pdfDiffuse = diffusePdf(wo, N);
+                float pdfGlossy = glossyPdf(wi, wo, N);
+                return (1.0f - gw) * pdfDiffuse + gw * pdfGlossy;
             }
             case MaterialType::METAL:
                 return 1.0f; // delta distribution approximation
@@ -150,7 +222,23 @@ struct Material {
             case MaterialType::DIFFUSE: {
                 float cosTheta = dot(wo, N);
                 if (cosTheta > 0) {
-                    return getColor(texU, texV) / (float)M_PI;
+                    float gw = clampedGlossyWeight();
+                    Vec3f diffuseBRDF = getColor(texU, texV) / (float)M_PI;
+
+                    Vec3f R = safeNormalize(reflect(wi, N), N);
+                    Vec3f glossyBRDF(0.0f);
+                    if (dot(R, N) > 0.0f) {
+                        float cosAlpha = std::max(0.0f, dot(safeNormalize(wo), R));
+                        if (cosAlpha > 0.0f) {
+                            float exponent = glossyExponent();
+                            Vec3f finalSpecularColor = specularColor * clampedSpecularBoost();
+                            glossyBRDF = finalSpecularColor *
+                                ((exponent + 2.0f) / (2.0f * (float)M_PI)) *
+                                std::pow(cosAlpha, exponent);
+                        }
+                    }
+
+                    return diffuseBRDF + glossyBRDF * gw;
                 }
                 return Vec3f(0);
             }

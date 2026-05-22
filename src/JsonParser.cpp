@@ -211,6 +211,7 @@ void JsonParser::parseRender(Lexer& lex, SceneConfig& cfg) {
         else if (key == "maxDepth") cfg.maxDepth = (int)expectNumber(lex);
         else if (key == "output") cfg.outputFile = expectString(lex);
         else if (key == "debug" || key == "debugMode") cfg.debugMode = expectBool(lex);
+        else if (key == "materialDebug") cfg.materialDebug = expectString(lex);
         else skipValue(lex);
 
         t = lex.next();
@@ -264,6 +265,9 @@ void JsonParser::parseObjects(Lexer& lex, SceneConfig& cfg) {
                 else if (key == "material") obj.materialType = expectString(lex);
                 else if (key == "color") obj.materialColor = parseVec3(lex);
                 else if (key == "roughness") obj.roughness = expectNumber(lex);
+                else if (key == "metallic") obj.metallic = expectNumber(lex);
+                else if (key == "glossyWeight") obj.glossyWeight = expectNumber(lex);
+                else if (key == "specularBoost") obj.specularBoost = expectNumber(lex);
                 else if (key == "ior") obj.ior = expectNumber(lex);
                 else if (key == "coordinateSystem") obj.convertFromBlender = expectString(lex) == "blender";
                 else if (key == "blenderCoordinates") obj.convertFromBlender = expectBool(lex);
