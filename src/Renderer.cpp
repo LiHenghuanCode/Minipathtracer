@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include "Random.h"
 #include <iostream>
 #include <fstream>
 #include <cmath>

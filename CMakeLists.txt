@@ -10,6 +10,7 @@ find_package(OpenMP REQUIRED)
 
 add_executable(pathtracer
     src/main.cpp
+    src/Material.cpp
     src/Renderer.cpp
     src/Scene.cpp
     src/BVH.cpp

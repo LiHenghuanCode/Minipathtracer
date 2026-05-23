@@ -2,7 +2,7 @@
     "render": {
   "width": 960,
   "height": 540,
-  "samples": 128,
+  "samples": 64,
   "maxDepth": 2,
   "output": "output.ppm",
   "aircraftClearcoatStrength": 0.35,

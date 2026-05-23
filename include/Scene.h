@@ -4,6 +4,7 @@
 #include "BVH.h"
 #include "Material.h"
 #include "Ocean.h"
+#include "Random.h"
 #include "Texture.h"
 #include <vector>
 #include <string>

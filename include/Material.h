@@ -1,21 +1,7 @@
 #pragma once
 #include "Vec3.h"
+#include "Random.h"
 #include "Texture.h"
-#include <algorithm>
-#include <cmath>
-#include <random>
-#include <memory>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-// Thread-local RNG
-inline float random_float() {
-    static thread_local std::mt19937 gen(std::random_device{}());
-    static thread_local std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-    return dist(gen);
-}
 
 enum class MaterialType {
     DIFFUSE,
@@ -44,213 +30,21 @@ struct Material {
     Vec3f absorptionColor = Vec3f(0.2f, 0.05f, 0.01f);
     Texture* texture = nullptr;      // diffuse texture (not owned)
 
-    bool hasEmission() const {
-        return emission.x > 0.01f || emission.y > 0.01f || emission.z > 0.01f;
-    }
+    bool hasEmission() const;
+    Vec3f getColor(float u, float v) const;
+    Vec3f sample(const Vec3f& wi, const Vec3f& normal) const;
+    float pdf(const Vec3f& wi, const Vec3f& wo, const Vec3f& normal) const;
+    Vec3f eval(const Vec3f& wi, const Vec3f& wo, const Vec3f& normal,
+               float texU = 0.0f, float texV = 0.0f) const;
 
-    Vec3f getColor(float u, float v) const {
-        if (texture && texture->isLoaded()) {
-            return texture->sample(u, v) * color;
-        }
-        return color;
-    }
-
-    static Vec3f safeNormalize(const Vec3f& v, const Vec3f& fallback = Vec3f(0, 1, 0)) {
-        float len2 = v.length2();
-        if (len2 < 1e-12f || !std::isfinite(len2)) return fallback;
-        return v / std::sqrt(len2);
-    }
-
-    float clampedRoughness() const {
-        return std::clamp(roughness, 0.02f, 1.0f);
-    }
-
-    float clampedGlossyWeight() const {
-        return std::clamp(glossyWeight, 0.0f, 0.8f);
-    }
-
-    float clampedSpecularBoost() const {
-        return std::clamp(specularBoost, 0.0f, 4.0f);
-    }
-
-    float glossyExponent() const {
-        float r = clampedRoughness();
-        return std::max(1.0f, 2.0f / (r * r) - 2.0f);
-    }
-
-    // Build local coordinate frame from normal
-    static void buildFrame(const Vec3f& N, Vec3f& T, Vec3f& B) {
-        if (std::fabs(N.x) > std::fabs(N.y)) {
-            float invLen = 1.0f / std::sqrt(N.x * N.x + N.z * N.z);
-            T = Vec3f(N.z * invLen, 0.0f, -N.x * invLen);
-        } else {
-            float invLen = 1.0f / std::sqrt(N.y * N.y + N.z * N.z);
-            T = Vec3f(0.0f, N.z * invLen, -N.y * invLen);
-        }
-        B = cross(N, T);
-    }
-
-    static Vec3f toWorld(const Vec3f& local, const Vec3f& N) {
-        Vec3f T, B;
-        buildFrame(N, T, B);
-        return local.x * T + local.y * B + local.z * N;
-    }
-
-    // Cosine-weighted hemisphere sample
-    static Vec3f sampleCosineHemisphere(const Vec3f& N) {
-        float r1 = random_float();
-        float r2 = random_float();
-        float r = std::sqrt(r1);
-        float phi = 2.0f * (float)M_PI * r2;
-        Vec3f local(r * std::cos(phi), r * std::sin(phi),
-                    std::sqrt(std::max(0.0f, 1.0f - r1)));
-        return toWorld(local, N);
-    }
-
-    static Vec3f sampleCosinePowerLobe(const Vec3f& axis, float exponent) {
-        float r1 = random_float();
-        float r2 = random_float();
-        float cosTheta = std::pow(r1, 1.0f / (exponent + 1.0f));
-        float sinTheta = std::sqrt(std::max(0.0f, 1.0f - cosTheta * cosTheta));
-        float phi = 2.0f * (float)M_PI * r2;
-        Vec3f local(sinTheta * std::cos(phi), sinTheta * std::sin(phi), cosTheta);
-        return safeNormalize(toWorld(local, safeNormalize(axis)));
-    }
-
-    float diffusePdf(const Vec3f& wo, const Vec3f& N) const {
-        float cosTheta = dot(wo, N);
-        return cosTheta > 0.0f ? cosTheta / (float)M_PI : 0.0f;
-    }
-
-    float glossyPdf(const Vec3f& wi, const Vec3f& wo, const Vec3f& N) const {
-        Vec3f R = safeNormalize(reflect(wi, N), N);
-        if (dot(R, N) <= 0.0f) return 0.0f;
-        float cosAlpha = std::max(0.0f, dot(safeNormalize(wo), R));
-        if (cosAlpha <= 0.0f) return 0.0f;
-        float exponent = glossyExponent();
-        return (exponent + 1.0f) / (2.0f * (float)M_PI) * std::pow(cosAlpha, exponent);
-    }
-
-    // Sample a scattered ray direction
-    Vec3f sample(const Vec3f& wi, const Vec3f& N) const {
-        switch (type) {
-            case MaterialType::DIFFUSE: {
-                float gw = clampedGlossyWeight();
-                if (gw > 0.0f && random_float() < gw) {
-                    Vec3f R = safeNormalize(reflect(wi, N), N);
-                    if (dot(R, N) > 0.0f) {
-                        Vec3f glossyDir = sampleCosinePowerLobe(R, glossyExponent());
-                        if (dot(glossyDir, N) > 1e-4f) {
-                            return glossyDir;
-                        }
-                    }
-                }
-                return sampleCosineHemisphere(N);
-            }
-
-            case MaterialType::METAL: {
-                Vec3f reflected = reflect(wi, N);
-                // Perturb by roughness
-                if (roughness > 0.001f) {
-                    Vec3f rand_dir = sampleCosineHemisphere(reflected.normalized());
-                    reflected = (reflected.normalized() + rand_dir * roughness).normalized();
-                    if (dot(reflected, N) < 0) reflected = reflect(wi, N).normalized();
-                }
-                return reflected.normalized();
-            }
-
-            case MaterialType::DIELECTRIC: {
-                float cosi = dot(-wi, N);
-                bool entering = cosi > 0;
-                Vec3f n = entering ? N : -N;
-                float etai = 1.0f, etat = ior;
-                if (!entering) std::swap(etai, etat);
-                cosi = std::fabs(cosi);
-
-                float sint = etai / etat * std::sqrt(std::max(0.0f, 1.0f - cosi * cosi));
-                float kr;
-                if (sint >= 1.0f) {
-                    kr = 1.0f;
-                } else {
-                    float cost = std::sqrt(std::max(0.0f, 1.0f - sint * sint));
-                    float Rs = ((etat * cosi) - (etai * cost)) / ((etat * cosi) + (etai * cost));
-                    float Rp = ((etai * cosi) - (etat * cost)) / ((etai * cosi) + (etat * cost));
-                    kr = (Rs * Rs + Rp * Rp) / 2.0f;
-                }
-
-                if (random_float() < kr) {
-                    // Reflect
-                    return reflect(wi, n).normalized();
-                } else {
-                    float eta = etai / etat;
-                    float k = 1.0f - eta * eta * (1.0f - cosi * cosi);
-                    if (k < 0) return reflect(wi, n).normalized();
-                    Vec3f refracted = eta * wi + (eta * cosi - std::sqrt(k)) * n;
-                    return refracted.normalized();
-                }
-            }
-
-            case MaterialType::EMISSIVE:
-                return Vec3f(0); // emissive surfaces don't scatter
-        }
-        return Vec3f(0);
-    }
-
-    // PDF of the sampled direction
-    float pdf(const Vec3f& wi, const Vec3f& wo, const Vec3f& N) const {
-        switch (type) {
-            case MaterialType::DIFFUSE: {
-                float gw = clampedGlossyWeight();
-                float pdfDiffuse = diffusePdf(wo, N);
-                float pdfGlossy = glossyPdf(wi, wo, N);
-                return (1.0f - gw) * pdfDiffuse + gw * pdfGlossy;
-            }
-            case MaterialType::METAL:
-                return 1.0f; // delta distribution approximation
-            case MaterialType::DIELECTRIC:
-                return 1.0f; // delta distribution
-            case MaterialType::EMISSIVE:
-                return 0.0f;
-        }
-        return 0.0f;
-    }
-
-    // BRDF evaluation
-    Vec3f eval(const Vec3f& wi, const Vec3f& wo, const Vec3f& N,
-               float texU = 0, float texV = 0) const {
-        switch (type) {
-            case MaterialType::DIFFUSE: {
-                float cosTheta = dot(wo, N);
-                if (cosTheta > 0) {
-                    float gw = clampedGlossyWeight();
-                    Vec3f diffuseBRDF = getColor(texU, texV) / (float)M_PI;
-
-                    Vec3f R = safeNormalize(reflect(wi, N), N);
-                    Vec3f glossyBRDF(0.0f);
-                    if (dot(R, N) > 0.0f) {
-                        float cosAlpha = std::max(0.0f, dot(safeNormalize(wo), R));
-                        if (cosAlpha > 0.0f) {
-                            float exponent = glossyExponent();
-                            Vec3f finalSpecularColor = specularColor * clampedSpecularBoost();
-                            glossyBRDF = finalSpecularColor *
-                                ((exponent + 2.0f) / (2.0f * (float)M_PI)) *
-                                std::pow(cosAlpha, exponent);
-                        }
-                    }
-
-                    return diffuseBRDF + glossyBRDF * gw;
-                }
-                return Vec3f(0);
-            }
-            case MaterialType::METAL: {
-                return getColor(texU, texV);
-            }
-            case MaterialType::DIELECTRIC: {
-                return Vec3f(1.0f); // perfect specular
-            }
-            case MaterialType::EMISSIVE:
-                return Vec3f(0);
-        }
-        return Vec3f(0);
-    }
+private:
+    float clampedRoughness() const;
+    float clampedGlossyWeight() const;
+    float clampedSpecularBoost() const;
+    float glossyExponent() const;
+    float diffusePdf(const Vec3f& wo, const Vec3f& normal) const;
+    float glossyPdf(const Vec3f& wi, const Vec3f& wo, const Vec3f& normal) const;
+    Vec3f sampleDiffuse(const Vec3f& wi, const Vec3f& normal) const;
+    Vec3f sampleMetal(const Vec3f& wi, const Vec3f& normal) const;
+    Vec3f sampleDielectric(const Vec3f& wi, const Vec3f& normal) const;
 };
