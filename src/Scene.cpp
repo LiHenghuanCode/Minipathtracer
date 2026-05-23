@@ -547,31 +547,42 @@ Vec3f Scene::skyColor(const Vec3f& direction) const {
     const SceneConfig::SkyConfig& sky = config.sky;
     Vec3f dir = direction.normalized();
 
-    constexpr float PI = 3.14159265358979323846f;
-
-    // 1. Elevation-angle gradient.
-    // angle = [-1, 1]: 0 at horizon, +1 at zenith, -1 at nadir.
-    float angle = std::atan2(dir.y, std::sqrt(dir.x*dir.x + dir.z*dir.z)) * 2.0f / PI;
-
-    Vec3f skyRGB;
-    if (angle >= 0.0f) {
-        // Above horizon: horizonColor -> topColor, pow(0.7) keeps horizon band wide
-        float t = std::pow(angle, 0.7f);
-        skyRGB = sky.horizonColor * (1.0f - t) + sky.topColor * t;
-    } else {
-        // Below horizon: horizonColor -> bottomColor
-        float t = std::clamp(-angle * 2.0f, 0.0f, 1.0f);
-        skyRGB = sky.horizonColor * (1.0f - t) + sky.bottomColor * t;
-    }
-
     // 2. Sun direction
     Vec3f sunDir   = sky.sunDirection.normalized();
     float sunDot   = std::max(0.0f, dot(dir, sunDir)); // clamped — for pow terms
     float cosTheta = dot(dir, sunDir);                  // unclamped — for exp2 and phase functions
 
+    auto expVec = [](const Vec3f& v) {
+        return Vec3f(std::exp(v.x), std::exp(v.y), std::exp(v.z));
+    };
+    auto safeDiv = [](const Vec3f& num, const Vec3f& den) {
+        return Vec3f(
+            num.x / std::max(den.x, 1e-6f),
+            num.y / std::max(den.y, 1e-6f),
+            num.z / std::max(den.z, 1e-6f)
+        );
+    };
+
+    // 1. Optical-depth driven single-scattering approximation.
+    // The view path grows rapidly toward the horizon, which naturally shifts
+    // the sky from blue overhead toward warm tones near sunset.
+    const float viewMu = std::max(dir.y, 0.03f);
+    const float sunMu = std::max(sunDir.y + 0.08f, 0.03f);
+    const float viewDepth = 1.0f / viewMu;
+    const float sunDepth = 1.0f / sunMu;
+
+    const Vec3f betaRayleighBase(5.8e-6f, 13.5e-6f, 33.1e-6f);
+    const Vec3f betaMieBase(21.0e-6f);
+    const Vec3f betaRayleigh = betaRayleighBase * 2200.0f;
+    const Vec3f betaMie = betaMieBase * 900.0f;
+    const Vec3f extinction = betaRayleigh + betaMie;
+
+    Vec3f sunTransmittance = expVec(extinction * (-sunDepth * 1.15f));
+    Vec3f viewTransmittance = expVec(extinction * (-viewDepth * 0.85f));
+
     // Rayleigh scattering (blue sky): phase = (3/16π)(1+cos²θ)
     float phaseR = 0.0596831f * (1.0f + cosTheta * cosTheta);
-    Vec3f skyR = Vec3f(5.8e-6f, 13.5e-6f, 33.1e-6f) * (phaseR * 1e5f); // R:G:B ratio = blue dominates
+    Vec3f skyR = betaRayleigh * phaseR;
 
     // Mie scattering (achromatic forward peak): Cornette-Shanks phase
     constexpr float g  = 0.76f;
@@ -581,21 +592,47 @@ Vec3f Scene::skyColor(const Vec3f& direction) const {
         ? 0.1193662f * (1.0f - g2) * (1.0f + cosTheta * cosTheta)
           / ((2.0f + g2) * std::pow(denomM, 1.5f))
         : 0.0f;
-    Vec3f skyM = Vec3f(21e-6f) * (phaseM * 1e5f);
+    Vec3f skyM = betaMie * phaseM;
 
-    skyRGB += (skyR + skyM) * 0.12f;  // keep cool scatter, but avoid pale HDR haze
+    Vec3f scattering = skyR + skyM;
+    Vec3f inscatter = safeDiv(scattering * sunTransmittance, extinction) * (Vec3f(1.0f) - viewTransmittance);
+    Vec3f skyRGB = inscatter * 16.0f;
+
+    // Below the horizon, keep a little warm aerosol glow instead of a direct gradient.
+    if (dir.y < 0.0f) {
+        float underHorizon = std::clamp(-dir.y * 6.0f, 0.0f, 1.0f);
+        float warmDepth = 1.0f / std::max(0.12f + dir.y + 0.2f, 0.03f);
+        Vec3f warmExtinction = expVec(Vec3f(-0.18f, -0.10f, -0.04f) * warmDepth);
+        skyRGB = skyRGB * (1.0f - underHorizon) + warmExtinction * (0.28f * underHorizon);
+    }
 
     // 3. Sun layers ordered wide → tight so the disk sits on top of the glow.
     // exp2 layers use raw cosTheta (unclamped) so the corona bleeds below the horizon line.
-    Vec3f warmColor = sky.sunGlowColor;
-    skyRGB += warmColor        * (0.22f * std::pow(sunDot,    24.0f));           // narrower wide glow
-    skyRGB += warmColor        * (0.22f * std::exp2(cosTheta *  55.0f -  55.0f)); // mid exp2 corona
-    skyRGB += warmColor        * (0.14f * std::exp2(cosTheta * 110.0f - 110.0f)); // inner exp2 ring
-    skyRGB += sky.sunDiskColor * (5.0f * std::pow(sunDot,  2000.0f));           // tight disk
+    // Anisotropic horizon glow — stretches the sun glow horizontally
+    // to create the elongated warm band along the horizon line.
+    {
+        Vec3f dirH  = Vec3f(dir.x, 0.0f, dir.z);
+        float dirHL = dirH.length();
+        Vec3f sunH  = Vec3f(sunDir.x, 0.0f, sunDir.z);
+        float sunHL = sunH.length();
+        if (dirHL > 1e-6f && sunHL > 1e-6f) {
+            dirH = dirH / dirHL;
+            sunH = sunH / sunHL;
+            float hDot  = std::max(0.0f, dot(dirH, sunH));
+            float vDiff = dir.y - sunDir.y;
+            // Horizontal: slow falloff (pow 6), Vertical: fast gaussian falloff
+            float aniso = std::pow(hDot, 6.0f) * std::exp(-vDiff * vDiff * 20.0f);
+            // Stronger near horizon (low elevation)
+            float horizonBoost = std::exp(-dir.y * dir.y * 8.0f);
+            skyRGB += sky.sunGlowColor * (aniso * horizonBoost * 0.16f);
+        }
+    }
 
-    // 4. Horizon dust
-    float dustMask = smoothstepCloud(0.05f, -0.1f, dir.y);
-    skyRGB += sky.horizonColor * (dustMask * 0.18f);
+    Vec3f warmColor = sky.sunGlowColor;
+    skyRGB += warmColor        * (0.07f * sky.sunGlowIntensity * std::pow(sunDot,    24.0f));            // narrower wide glow
+    skyRGB += warmColor        * (0.08f * sky.sunGlowIntensity * std::exp2(cosTheta *  55.0f -  55.0f)); // mid exp2 corona
+    skyRGB += warmColor        * (0.04f * sky.sunGlowIntensity * std::exp2(cosTheta * 110.0f - 110.0f)); // inner exp2 ring
+    skyRGB += sky.sunDiskColor * (3.2f * sky.sunDiskIntensity * std::pow(sunDot,  1400.0f));             // tight disk
 
     // ---- Procedural cloud layer ----
     if (sky.cloudsEnabled && dir.y > -0.05f) {
@@ -641,7 +678,7 @@ Vec3f Scene::skyColor(const Vec3f& direction) const {
         float sunEdge = std::pow(rawSat,  sky.cloudSunEdgePower)   // thick cloud only
                       * std::pow(maskSat, sky.cloudSunEdgePower)   // dense mask only
                       * std::pow(sunDot,  sky.cloudSunFocusPower); // near sun only
-        cloudColor += sky.sunGlowColor * (sunEdge * sky.cloudSunEdgeIntensity * 0.55f);
+        cloudColor += sky.sunGlowColor * (sunEdge * sky.cloudSunEdgeIntensity * 0.35f);
 
         // Alpha-composite. Because skyColor() is the miss-ray return value, reflective water
         // naturally captures these cloud colors through path tracing — no extra code needed.
@@ -653,11 +690,11 @@ Vec3f Scene::skyColor(const Vec3f& direction) const {
         float cloudCore = std::pow(std::clamp(cloudRaw,  0.0f, 1.0f), 3.0f)
                         * std::pow(std::clamp(cloudMask, 0.0f, 1.0f), 3.0f);
         // Removed the +0.4f constant so orange only fires near the sun, not everywhere.
-        skyRGB += Vec3f(1.5f, 0.45f, 0.05f) * (cloudCore * std::pow(sunDot, 4.0f) * 0.32f);
+        skyRGB += Vec3f(1.2f, 0.38f, 0.06f) * (cloudCore * std::pow(sunDot, 4.0f) * 0.16f);
     }
 
     // 5. Post-cloud flare — tightened to pow(8) so it stays near the sun, not a wide orange wash.
-    skyRGB += Vec3f(1.0f, 0.4f, 0.2f) * (std::pow(sunDot, 12.0f) * 0.18f);
+    skyRGB += Vec3f(0.8f, 0.32f, 0.16f) * (std::pow(sunDot, 12.0f) * 0.08f);
 
     // HDR — Reinhard tone mapping in writePPM handles clamping
     return skyRGB;
@@ -748,10 +785,12 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
                          dot(wo, isect.normal) < 0.0f;
     if (enteringWater && bounceIsect.hit) {
         float distance = bounceIsect.t;
+        // Soften absorption to 1/3 of material value for clearer water
+        float absScale = 0.33f;
         Vec3f attenuation(
-            std::exp(-mat.absorptionColor.x * distance),
-            std::exp(-mat.absorptionColor.y * distance),
-            std::exp(-mat.absorptionColor.z * distance)
+            std::exp(-mat.absorptionColor.x * absScale * distance),
+            std::exp(-mat.absorptionColor.y * absScale * distance),
+            std::exp(-mat.absorptionColor.z * absScale * distance)
         );
         indirect = indirect * attenuation;
     }
@@ -800,9 +839,29 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
                 result = result * 0.35f + mirrorDebug * 0.65f;
             }
         }
-    } else {
-        // Metal and dielectric: delta-like distributions
+    } else if (mat.type == MaterialType::METAL) {
         result = directLight + brdf * indirect;
+    } else {
+        // Dielectric: path-traced result + direct sky/sun reflection fallback
+        result = directLight + brdf * indirect;
+
+        // Add Fresnel-weighted environment reflection so the water surface
+        // always picks up sky color, even when recursive paths lose energy.
+        Vec3f R = reflect(ray.direction, N).normalized();
+        float NoV = std::max(0.0f, dot(N, (-ray.direction).normalized()));
+        // Schlick Fresnel with F0 = 0.02 (water at ior 1.33)
+        float fresnel = 0.02f + 0.98f * std::pow(1.0f - NoV, 5.0f);
+        Vec3f envColor = skyColor(R);
+        result += envColor * fresnel * 0.5f;
+    }
+
+    // Distance fog — blends distant objects toward the warm horizon color
+    // for atmospheric haze / golden hour feel.
+    {
+        float fogDensity = 0.003f;
+        float fogAmount = 1.0f - std::exp(-isect.t * fogDensity);
+        Vec3f fogColor = config.sky.horizonColor * 0.35f;
+        result = result * (1.0f - fogAmount) + fogColor * fogAmount;
     }
 
     return sanitizeRadiance(result / survivalProb);
