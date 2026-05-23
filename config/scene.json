@@ -1,10 +1,14 @@
 {
     "render": {
-  "width": 1920,
-  "height": 1080,
-  "samples": 64,
+  "width": 960,
+  "height": 540,
+  "samples": 128,
   "maxDepth": 2,
-  "output": "output.ppm"
+  "output": "output.ppm",
+  "aircraftClearcoatStrength": 0.35,
+"aircraftClearcoatEnvBoost": 1.5,
+"aircraftClearcoatF0": 0.10,
+"aircraftMirrorDebug": true
 },
     "camera": {
         "position": [35, 5.5, -1.5],
@@ -20,7 +24,8 @@
             "position": [0, 0, 0],
             "scale": 1.0,
             "glossyWeight": 0.50,
-        "specularBoost": 1.5
+        "specularBoost": 1.5,
+        "roughness": 0.25
         },
         {
             "type": "plane",
@@ -51,7 +56,29 @@
         }
     },
     "sky": {
-        "top": [0.15, 0.25, 0.55],
-        "bottom": [0.6, 0.35, 0.2]
+        "enabled": true,
+        "topColor":     [0.04, 0.06, 0.18],
+        "horizonColor": [1.20, 0.36, 0.10],
+        "bottomColor":  [0.42, 0.28, 0.10],
+        "sunDirection": [-0.966, -0.017, -0.258],
+        "sunDiskColor": [4.0, 2.2, 1.0],
+        "sunGlowColor": [1.45, 0.42, 0.12],
+        "sunDiskPower":     800.0,
+        "sunGlowPower":     6.0,
+        "sunDiskIntensity": 1.5,
+        "sunGlowIntensity": 3.0,
+        "cloudsEnabled": true,
+        "cloudScale":     1.5,
+        "cloudThreshold": 0.50,
+        "cloudSoftness":  0.24,
+        "cloudOpacity":   0.42,
+        "cloudDarkColor": [0.24, 0.09, 0.16],
+        "cloudWarmColor": [1.05, 0.34, 0.08],
+        "cloudAdaptiveScaleEnabled": true,
+        "cloudAdaptiveMinScale": 0.15,
+        "cloudAdaptiveMaxScale": 8.0,
+        "cloudSunEdgeIntensity": 1.2,
+        "cloudSunEdgePower":     3.0,
+        "cloudSunFocusPower":    2.0
     }
 }

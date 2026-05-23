@@ -112,6 +112,48 @@ Vec3f blenderToRendererPoint(const Vec3f& v) {
 Vec3f blenderToRendererVector(const Vec3f& v) {
     return blenderToRendererPoint(v).normalized();
 }
+
+// ---- Procedural cloud noise (Stage 4) ----
+
+// Maps (x, y) to a pseudo-random float in [0, 1] via sin-fract hash.
+float hash21(float x, float y) {
+    float h = std::sin(x * 127.1f + y * 311.7f) * 43758.5453123f;
+    return h - std::floor(h);
+}
+
+// Bilinear value noise with cubic (smoothstep) interpolation.
+float valueNoise2D(float x, float y) {
+    float ix = std::floor(x), iy = std::floor(y);
+    float fx = x - ix,        fy = y - iy;
+    // Cubic smoothstep so derivatives are continuous at cell edges
+    float ux = fx * fx * (3.0f - 2.0f * fx);
+    float uy = fy * fy * (3.0f - 2.0f * fy);
+    float v00 = hash21(ix,       iy      );
+    float v10 = hash21(ix + 1.f, iy      );
+    float v01 = hash21(ix,       iy + 1.f);
+    float v11 = hash21(ix + 1.f, iy + 1.f);
+    float lo = v00 * (1.f - ux) + v10 * ux;
+    float hi = v01 * (1.f - ux) + v11 * ux;
+    return lo * (1.f - uy) + hi * uy;
+}
+
+// Fractal Brownian Motion: 5 octaves, amplitude halved and frequency doubled each step.
+// Result is roughly in [0, 1] and has multi-scale cloud structure.
+float fbm2D(float x, float y) {
+    float value = 0.f, amp = 0.5f, freq = 1.f;
+    for (int i = 0; i < 5; ++i) {
+        value += valueNoise2D(x * freq, y * freq) * amp;
+        amp   *= 0.5f;
+        freq  *= 2.0f;
+    }
+    return value;
+}
+
+// Cubic smoothstep remapping of x from [edge0, edge1] into [0, 1].
+float smoothstepCloud(float edge0, float edge1, float x) {
+    float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
 }
 
 void Scene::loadFromConfig(const SceneConfig& cfg) {
@@ -140,6 +182,17 @@ void Scene::loadFromConfig(const SceneConfig& cfg) {
         printVec3("OBJ bounding box max", sceneBounds.max_p);
         printVec3("OBJ bounding box center", sceneBounds.centroid());
         printVec3("OBJ bounding box size", sceneBounds.extent());
+    }
+
+    bool hasGlossyDiffuse = false;
+    for (const auto& mat : materials) {
+        if (mat.type == MaterialType::DIFFUSE && mat.glossyWeight > 0.0f) {
+            hasGlossyDiffuse = true;
+            break;
+        }
+    }
+    if (hasGlossyDiffuse) {
+        std::cout << "clearcoat enabled for glossy DIFFUSE materials" << std::endl;
     }
 
     if (config.hasAreaLight) {
@@ -491,32 +544,123 @@ Vec3f Scene::sampleAreaLight(const Vec3f& hitPoint, const Vec3f& wi, const Vec3f
 }
 
 Vec3f Scene::skyColor(const Vec3f& direction) const {
+    const SceneConfig::SkyConfig& sky = config.sky;
     Vec3f dir = direction.normalized();
 
-    float t = std::clamp(dir.y * 0.5f + 0.5f, 0.0f, 1.0f);
-    Vec3f sky = config.skyColorBottom * (1.0f - t) + config.skyColorTop * t;
+    constexpr float PI = 3.14159265358979323846f;
 
-    Vec3f sunDir = hasAreaLight ? areaLight.normal : Vec3f(0.0f, 0.0f, 1.0f);
-    float sunDot = dot(dir, sunDir);
+    // 1. Elevation-angle gradient.
+    // angle = [-1, 1]: 0 at horizon, +1 at zenith, -1 at nadir.
+    float angle = std::atan2(dir.y, std::sqrt(dir.x*dir.x + dir.z*dir.z)) * 2.0f / PI;
 
-    float horizonGlow = std::exp(-std::abs(dir.y) * 4.0f);
-    sky = sky + config.skyColorBottom * horizonGlow * 0.3f;
-
-    if (sunDot > 0.0f) {
-        float wideGlow = std::pow(sunDot, 2.0f);
-        sky = sky + Vec3f(0.8f, 0.4f, 0.15f) * wideGlow * 0.5f;
-
-        float midGlow = std::pow(sunDot, 8.0f);
-        sky = sky + Vec3f(1.0f, 0.6f, 0.2f) * midGlow * 1.5f;
-
-        float narrowGlow = std::pow(sunDot, 32.0f);
-        sky = sky + Vec3f(1.0f, 0.8f, 0.4f) * narrowGlow * 3.0f;
-
-        float tightGlow = std::pow(sunDot, 128.0f);
-        sky = sky + Vec3f(1.0f, 0.95f, 0.8f) * tightGlow * 5.0f;
+    Vec3f skyRGB;
+    if (angle >= 0.0f) {
+        // Above horizon: horizonColor -> topColor, pow(0.7) keeps horizon band wide
+        float t = std::pow(angle, 0.7f);
+        skyRGB = sky.horizonColor * (1.0f - t) + sky.topColor * t;
+    } else {
+        // Below horizon: horizonColor -> bottomColor
+        float t = std::clamp(-angle * 2.0f, 0.0f, 1.0f);
+        skyRGB = sky.horizonColor * (1.0f - t) + sky.bottomColor * t;
     }
 
-    return sky;
+    // 2. Sun direction
+    Vec3f sunDir   = sky.sunDirection.normalized();
+    float sunDot   = std::max(0.0f, dot(dir, sunDir)); // clamped — for pow terms
+    float cosTheta = dot(dir, sunDir);                  // unclamped — for exp2 and phase functions
+
+    // Rayleigh scattering (blue sky): phase = (3/16π)(1+cos²θ)
+    float phaseR = 0.0596831f * (1.0f + cosTheta * cosTheta);
+    Vec3f skyR = Vec3f(5.8e-6f, 13.5e-6f, 33.1e-6f) * (phaseR * 1e5f); // R:G:B ratio = blue dominates
+
+    // Mie scattering (achromatic forward peak): Cornette-Shanks phase
+    constexpr float g  = 0.76f;
+    constexpr float g2 = g * g;
+    float denomM = 1.0f + g2 - 2.0f * g * cosTheta;
+    float phaseM = (denomM > 1e-6f)
+        ? 0.1193662f * (1.0f - g2) * (1.0f + cosTheta * cosTheta)
+          / ((2.0f + g2) * std::pow(denomM, 1.5f))
+        : 0.0f;
+    Vec3f skyM = Vec3f(21e-6f) * (phaseM * 1e5f);
+
+    skyRGB += (skyR + skyM) * 0.12f;  // keep cool scatter, but avoid pale HDR haze
+
+    // 3. Sun layers ordered wide → tight so the disk sits on top of the glow.
+    // exp2 layers use raw cosTheta (unclamped) so the corona bleeds below the horizon line.
+    Vec3f warmColor = sky.sunGlowColor;
+    skyRGB += warmColor        * (0.22f * std::pow(sunDot,    24.0f));           // narrower wide glow
+    skyRGB += warmColor        * (0.22f * std::exp2(cosTheta *  55.0f -  55.0f)); // mid exp2 corona
+    skyRGB += warmColor        * (0.14f * std::exp2(cosTheta * 110.0f - 110.0f)); // inner exp2 ring
+    skyRGB += sky.sunDiskColor * (5.0f * std::pow(sunDot,  2000.0f));           // tight disk
+
+    // 4. Horizon dust
+    float dustMask = smoothstepCloud(0.05f, -0.1f, dir.y);
+    skyRGB += sky.horizonColor * (dustMask * 0.18f);
+
+    // ---- Procedural cloud layer ----
+    if (sky.cloudsEnabled && dir.y > -0.05f) {
+        // Project ray to a sun-centered UV so clouds cluster around the sun direction.
+        float denom    = std::max(dir.y    + 0.3f, 0.05f);
+        float sunDenom = std::max(sunDir.y + 0.3f, 0.05f);
+        float projU = dir.x / denom - sunDir.x / sunDenom;
+        float projV = dir.z / denom - sunDir.z / sunDenom;
+
+        // Distance-adaptive FBM scale:
+        // Near clouds (high elevation, low distApprox) sample at higher noise frequency → more detail.
+        // Far clouds (near horizon, high distApprox) sample at lower frequency → softer, smoother bands.
+        float horizLen   = std::sqrt(dir.x*dir.x + dir.z*dir.z);
+        float distApprox = horizLen / std::max(dir.y + 0.1f, 0.01f);
+        float adaptiveScale;
+        if (sky.cloudAdaptiveScaleEnabled) {
+            adaptiveScale = sky.cloudScale * 0.3f / (distApprox * 0.01f + 0.2f);
+            adaptiveScale = std::clamp(adaptiveScale,
+                                       sky.cloudAdaptiveMinScale,
+                                       sky.cloudAdaptiveMaxScale);
+        } else {
+            adaptiveScale = sky.cloudScale;
+        }
+
+        float cloudRaw  = fbm2D(projU * adaptiveScale, projV * adaptiveScale);
+        float cloudMask = smoothstepCloud(sky.cloudThreshold,
+                                          sky.cloudThreshold + sky.cloudSoftness,
+                                          cloudRaw);
+        float zenithFade = 1.0f - std::clamp((dir.y - 0.6f) / 0.4f, 0.0f, 1.0f);
+        cloudMask *= zenithFade;
+
+        float sunInfluence = std::pow(sunDot, 3.0f);
+        // Dark side tinted by current skyRGB so it inherits the orange/blue gradient.
+        // Bright side uses warm sunlit color.
+        Vec3f cloudColor = sky.cloudDarkColor * skyRGB * 1.25f * (1.0f - sunInfluence)
+                         + sky.cloudWarmColor * (sunInfluence * 0.75f);
+
+        // Sun-lit edge highlight:
+        // Orange is added only where cloud raw density is high (thick regions), mask is strong,
+        // and the cloud is angularly close to the sun — all three pow() terms ensure this.
+        float rawSat  = std::clamp(cloudRaw,  0.0f, 1.0f);
+        float maskSat = std::clamp(cloudMask, 0.0f, 1.0f);
+        float sunEdge = std::pow(rawSat,  sky.cloudSunEdgePower)   // thick cloud only
+                      * std::pow(maskSat, sky.cloudSunEdgePower)   // dense mask only
+                      * std::pow(sunDot,  sky.cloudSunFocusPower); // near sun only
+        cloudColor += sky.sunGlowColor * (sunEdge * sky.cloudSunEdgeIntensity * 0.55f);
+
+        // Alpha-composite. Because skyColor() is the miss-ray return value, reflective water
+        // naturally captures these cloud colors through path tracing — no extra code needed.
+        float alpha = cloudMask * sky.cloudOpacity;
+        skyRGB = skyRGB * (1.0f - alpha) + cloudColor * alpha;
+
+        // Additive orange highlight on dense sun-facing cloud cores (reference shader approach).
+        // Punches saturated orange through the blended base instead of being washed into it.
+        float cloudCore = std::pow(std::clamp(cloudRaw,  0.0f, 1.0f), 3.0f)
+                        * std::pow(std::clamp(cloudMask, 0.0f, 1.0f), 3.0f);
+        // Removed the +0.4f constant so orange only fires near the sun, not everywhere.
+        skyRGB += Vec3f(1.5f, 0.45f, 0.05f) * (cloudCore * std::pow(sunDot, 4.0f) * 0.32f);
+    }
+
+    // 5. Post-cloud flare — tightened to pow(8) so it stays near the sun, not a wide orange wash.
+    skyRGB += Vec3f(1.0f, 0.4f, 0.2f) * (std::pow(sunDot, 12.0f) * 0.18f);
+
+    // HDR — Reinhard tone mapping in writePPM handles clamping
+    return skyRGB;
 }
 
 Vec3f Scene::castRay(const Ray& ray, int depth) const {
@@ -614,8 +758,48 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
 
     Vec3f result;
     if (mat.type == MaterialType::DIFFUSE) {
+        bool isGlossyDiffuse = mat.glossyWeight > 0.0f;
+        Vec3f baseColor = mat.getColor(isect.texU, isect.texV);
+        Vec3f ambient = isGlossyDiffuse
+            ? baseColor * Vec3f(0.018f, 0.016f, 0.014f)
+            : baseColor * Vec3f(0.04f, 0.035f, 0.03f);
+        float skyFactor = std::max(N.y, 0.0f) * (isGlossyDiffuse ? 0.015f : 0.025f);
+        Vec3f skyAmbient = baseColor * config.sky.horizonColor * skyFactor;
+
+        Vec3f sunDir = config.sky.sunDirection.normalized();
+        float backLight = std::max(-dot(N, sunDir), 0.0f) * 0.15f;
         float cosTheta = std::max(0.0f, dot(wo, N));
-        result = directLight + brdf * indirect * cosTheta / pdf_val;
+
+        // directLight already contains BRDF * surfaceCos * geometryTerm — do not reweight by nDotL
+        Vec3f glossy(0.0f);
+        if (cosTheta > 1e-6f)
+            glossy = brdf * indirect * cosTheta / pdf_val;
+
+        result = ambient + skyAmbient + baseColor * backLight + directLight + glossy;
+
+        // Clearcoat environment reflection for glossy paint. This adds a thin
+        // Fresnel layer over the path-traced diffuse/glossy BRDF above instead
+        // of replacing it with a local Blinn-Phong style highlight.
+        if (isGlossyDiffuse) {
+            Vec3f V = (-ray.direction).normalized();
+            Vec3f R = reflect(ray.direction.normalized(), N).normalized();
+
+            float NoV = std::max(0.0f, dot(N, V));
+            float smoothness = 1.0f - std::clamp(mat.roughness, 0.0f, 1.0f);
+            float fR0 = std::clamp(config.aircraftClearcoatF0, 0.0f, 1.0f);
+            float fresnel = fR0 + (1.0f - fR0) * std::pow(1.0f - NoV, 5.0f) * smoothness;
+
+            float clearcoatStrength = mat.glossyWeight * smoothness * mat.specularBoost
+                * std::max(0.0f, config.aircraftClearcoatStrength);
+
+            Vec3f envReflection = skyColor(R) * std::max(0.0f, config.aircraftClearcoatEnvBoost);
+            result += envReflection * fresnel * clearcoatStrength;
+
+            if (config.aircraftMirrorDebug) {
+                Vec3f mirrorDebug = skyColor(R) * baseColor;
+                result = result * 0.35f + mirrorDebug * 0.65f;
+            }
+        }
     } else {
         // Metal and dielectric: delta-like distributions
         result = directLight + brdf * indirect;

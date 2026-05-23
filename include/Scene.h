@@ -38,6 +38,12 @@ struct SceneConfig {
     int height = 720;
     int spp = 64;
     int maxDepth = 8;
+    std::string toneMapping = "softWhiteClamp";
+    float displayExposure = 1.0f;
+    float aircraftClearcoatStrength = 0.35f;
+    float aircraftClearcoatEnvBoost = 1.5f;
+    float aircraftClearcoatF0 = 0.10f;
+    bool aircraftMirrorDebug = false;
 
     // Camera
     Vec3f cameraPos = Vec3f(0, 1.5f, 5);
@@ -47,6 +53,38 @@ struct SceneConfig {
     float fov = 45.0f;
     bool debugMode = false;
     std::string materialDebug = "none";
+
+    // Sky configuration (procedural sunset gradient + sun disk/glow)
+    struct SkyConfig {
+        bool enabled = true;
+        Vec3f topColor     = Vec3f(0.08f, 0.10f, 0.23f);  // deep blue/purple zenith
+        Vec3f horizonColor = Vec3f(1.0f,  0.34f, 0.12f);  // orange-red horizon
+        Vec3f bottomColor  = Vec3f(0.95f, 0.62f, 0.25f);  // warm gold below horizon
+        Vec3f sunDirection = Vec3f(0.65f, 0.08f, -0.75f); // sun near the horizon
+        Vec3f sunDiskColor = Vec3f(8.0f,  4.5f,  1.5f);   // HDR bright disk
+        Vec3f sunGlowColor = Vec3f(2.0f,  0.75f, 0.22f);  // warm wide glow
+        float sunDiskPower     = 500.0f;  // tightness of sun disk
+        float sunGlowPower     = 10.0f;   // spread of sun glow
+        float sunDiskIntensity = 1.2f;
+        float sunGlowIntensity = 1.8f;
+        // Cloud fields — parsed now, used in Stage 4
+        bool  cloudsEnabled  = false;
+        float cloudScale     = 3.5f;
+        float cloudThreshold = 0.48f;
+        float cloudSoftness  = 0.22f;
+        float cloudOpacity   = 0.55f;
+        Vec3f cloudDarkColor = Vec3f(0.22f, 0.12f, 0.20f);
+        Vec3f cloudWarmColor = Vec3f(1.0f,  0.42f, 0.16f);
+        // Distance-adaptive FBM scale
+        bool  cloudAdaptiveScaleEnabled = true;
+        float cloudAdaptiveMinScale     = 0.15f;
+        float cloudAdaptiveMaxScale     = 8.0f;
+        // Sun-lit edge highlight
+        float cloudSunEdgeIntensity = 1.2f;
+        float cloudSunEdgePower     = 3.0f;
+        float cloudSunFocusPower    = 2.0f;
+    };
+    SkyConfig sky;
 
     // Lighting
     struct AreaLightConfig {
@@ -59,8 +97,6 @@ struct SceneConfig {
     };
     AreaLightConfig areaLightConfig;
     bool hasAreaLight = false;
-    Vec3f skyColorTop = Vec3f(0.2f, 0.3f, 0.8f);
-    Vec3f skyColorBottom = Vec3f(1.0f, 0.6f, 0.3f);
 
     // Objects (loaded from JSON)
     struct ObjectEntry {

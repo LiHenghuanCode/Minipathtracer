@@ -212,6 +212,12 @@ void JsonParser::parseRender(Lexer& lex, SceneConfig& cfg) {
         else if (key == "output") cfg.outputFile = expectString(lex);
         else if (key == "debug" || key == "debugMode") cfg.debugMode = expectBool(lex);
         else if (key == "materialDebug") cfg.materialDebug = expectString(lex);
+        else if (key == "toneMapping") cfg.toneMapping = expectString(lex);
+        else if (key == "displayExposure" || key == "exposure") cfg.displayExposure = (float)expectNumber(lex);
+        else if (key == "aircraftClearcoatStrength") cfg.aircraftClearcoatStrength = (float)expectNumber(lex);
+        else if (key == "aircraftClearcoatEnvBoost") cfg.aircraftClearcoatEnvBoost = (float)expectNumber(lex);
+        else if (key == "aircraftClearcoatF0") cfg.aircraftClearcoatF0 = (float)expectNumber(lex);
+        else if (key == "aircraftMirrorDebug") cfg.aircraftMirrorDebug = expectBool(lex);
         else skipValue(lex);
 
         t = lex.next();
@@ -320,8 +326,33 @@ void JsonParser::parseSky(Lexer& lex, SceneConfig& cfg) {
     while (t.type != Token::RBRACE) {
         std::string key = t.value;
         expectToken(lex, Token::COLON);
-        if (key == "top") cfg.skyColorTop = parseVec3(lex);
-        else if (key == "bottom") cfg.skyColorBottom = parseVec3(lex);
+        if      (key == "enabled")           cfg.sky.enabled          = expectBool(lex);
+        else if (key == "topColor")          cfg.sky.topColor         = parseVec3(lex);
+        else if (key == "horizonColor")      cfg.sky.horizonColor     = parseVec3(lex);
+        else if (key == "bottomColor")       cfg.sky.bottomColor      = parseVec3(lex);
+        else if (key == "sunDirection")      cfg.sky.sunDirection     = parseVec3(lex);
+        else if (key == "sunDiskColor")      cfg.sky.sunDiskColor     = parseVec3(lex);
+        else if (key == "sunGlowColor")      cfg.sky.sunGlowColor     = parseVec3(lex);
+        else if (key == "sunDiskPower")      cfg.sky.sunDiskPower     = expectNumber(lex);
+        else if (key == "sunGlowPower")      cfg.sky.sunGlowPower     = expectNumber(lex);
+        else if (key == "sunDiskIntensity")  cfg.sky.sunDiskIntensity = expectNumber(lex);
+        else if (key == "sunGlowIntensity")  cfg.sky.sunGlowIntensity = expectNumber(lex);
+        else if (key == "cloudsEnabled")     cfg.sky.cloudsEnabled    = expectBool(lex);
+        else if (key == "cloudScale")        cfg.sky.cloudScale       = expectNumber(lex);
+        else if (key == "cloudThreshold")    cfg.sky.cloudThreshold   = expectNumber(lex);
+        else if (key == "cloudSoftness")     cfg.sky.cloudSoftness    = expectNumber(lex);
+        else if (key == "cloudOpacity")      cfg.sky.cloudOpacity     = expectNumber(lex);
+        else if (key == "cloudDarkColor")    cfg.sky.cloudDarkColor   = parseVec3(lex);
+        else if (key == "cloudWarmColor")    cfg.sky.cloudWarmColor   = parseVec3(lex);
+        else if (key == "cloudAdaptiveScaleEnabled") cfg.sky.cloudAdaptiveScaleEnabled = expectBool(lex);
+        else if (key == "cloudAdaptiveMinScale")     cfg.sky.cloudAdaptiveMinScale     = expectNumber(lex);
+        else if (key == "cloudAdaptiveMaxScale")     cfg.sky.cloudAdaptiveMaxScale     = expectNumber(lex);
+        else if (key == "cloudSunEdgeIntensity")     cfg.sky.cloudSunEdgeIntensity     = expectNumber(lex);
+        else if (key == "cloudSunEdgePower")         cfg.sky.cloudSunEdgePower         = expectNumber(lex);
+        else if (key == "cloudSunFocusPower")        cfg.sky.cloudSunFocusPower        = expectNumber(lex);
+        // Legacy keys for backward compatibility
+        else if (key == "top")    cfg.sky.topColor    = parseVec3(lex);
+        else if (key == "bottom") cfg.sky.bottomColor = parseVec3(lex);
         else skipValue(lex);
 
         t = lex.next();

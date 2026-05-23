@@ -57,7 +57,7 @@ void Renderer::render(const Scene& scene) {
     if (scene.config.debugMode) {
         std::cout << "Rendering debug axes/bounding-box view..." << std::endl;
         renderDebugView(scene, framebuffer, width, height, eye, right, up, forward, scale, aspectRatio);
-        writePPM(scene.config.outputFile, framebuffer, width, height);
+        writePPM(scene.config.outputFile, framebuffer, width, height, scene.config);
         return;
     }
 
@@ -94,7 +94,7 @@ void Renderer::render(const Scene& scene) {
     }
     std::cout << "\nRendering complete." << std::endl;
 
-    writePPM(scene.config.outputFile, framebuffer, width, height);
+    writePPM(scene.config.outputFile, framebuffer, width, height, scene.config);
 }
 
 void Renderer::renderDebugView(const Scene& scene, std::vector<Vec3f>& framebuffer,
@@ -179,26 +179,95 @@ void Renderer::renderDebugView(const Scene& scene, std::vector<Vec3f>& framebuff
 }
 
 void Renderer::writePPM(const std::string& filename, const std::vector<Vec3f>& framebuffer,
-                         int width, int height) {
+                         int width, int height, const SceneConfig& config) {
     FILE* fp = fopen(filename.c_str(), "wb");
     if (!fp) {
         std::cerr << "Failed to open output file: " << filename << std::endl;
         return;
     }
 
+    const bool useTimeWarp = config.toneMapping == "timeWarp";
+    const bool useSoftWhiteClamp = config.toneMapping != "filmic" && !useTimeWarp;
+    const float displayExposure = std::max(0.0f, config.displayExposure);
+
     fprintf(fp, "P6\n%d %d\n255\n", width, height);
     for (int i = 0; i < width * height; ++i) {
         Vec3f c = framebuffer[i];
 
-        // Reinhard tone mapping
-        c.x = c.x / (c.x + 1.0f);
-        c.y = c.y / (c.y + 1.0f);
-        c.z = c.z / (c.z + 1.0f);
+        int px = i % width;
+        int py = i / width;
+        float invW = width > 1 ? 1.0f / (float)(width - 1) : 0.0f;
+        float invH = height > 1 ? 1.0f / (float)(height - 1) : 0.0f;
+        float vx = (float)px * invW * 2.0f - 1.0f;
+        float vy = (float)py * invH * 2.0f - 1.0f;
+        float dist2 = vx * vx + vy * vy;
 
-        // Gamma correction (1/2.2)
-        c.x = std::pow(std::clamp(c.x, 0.0f, 1.0f), 1.0f / 2.2f);
-        c.y = std::pow(std::clamp(c.y, 0.0f, 1.0f), 1.0f / 2.2f);
-        c.z = std::pow(std::clamp(c.z, 0.0f, 1.0f), 1.0f / 2.2f);
+        if (useTimeWarp) {
+            c *= displayExposure;
+            c.x = 1.0f - std::exp2(-c.x);
+            c.y = 1.0f - std::exp2(-c.y);
+            c.z = 1.0f - std::exp2(-c.z);
+            c.x = std::sqrt(std::clamp(c.x, 0.0f, 1.0f));
+            c.y = std::sqrt(std::clamp(c.y, 0.0f, 1.0f));
+            c.z = std::sqrt(std::clamp(c.z, 0.0f, 1.0f));
+
+            float vignette = 1.0f / (dist2 * 2.5f + 1.0f);
+            c *= vignette;
+        } else {
+            // Vignette — darken edges so the orange horizon doesn't bleed uniformly.
+            float vign = 1.0f - 0.35f * dist2;
+            c *= std::max(0.0f, vign);
+        }
+
+        if (useTimeWarp) {
+            c.x = std::clamp(c.x, 0.0f, 1.0f);
+            c.y = std::clamp(c.y, 0.0f, 1.0f);
+            c.z = std::clamp(c.z, 0.0f, 1.0f);
+        } else if (useSoftWhiteClamp) {
+            // Soft-white-clamp cinematic curve (reference car-paint shader style).
+            // Maps [0,∞) smoothly to [0,1): highlights roll off to near-white instead
+            // of hard-clipping, giving brighter aircraft whites and a vivid sky.
+            // Tune: raise exposure (1.3) to brighten; raise w (0.15) to soften knee.
+            c *= 1.3f;
+
+            const float w2 = 0.15f * 0.15f;
+            auto sqrtV = [](const Vec3f& v) {
+                return Vec3f(std::sqrt(v.x), std::sqrt(v.y), std::sqrt(v.z));
+            };
+            Vec3f t = (Vec3f(1.0f) - (c + Vec3f(w2))) * 0.5f;
+            c = Vec3f(1.0f) - (sqrtV(t * t + Vec3f(w2)) + t);
+            c.x = std::clamp(c.x, 0.0f, 1.0f);
+            c.y = std::clamp(c.y, 0.0f, 1.0f);
+            c.z = std::clamp(c.z, 0.0f, 1.0f);
+
+            // Saturation + green trim before gamma
+            float luma = 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+            const float sat = 1.15f;
+            c.x = luma + (c.x - luma) * sat;
+            c.y = luma + (c.y - luma) * sat;
+            c.z = luma + (c.z - luma) * sat;
+            c.y *= 0.93f;
+        } else {
+            // Filmic: c/(c+0.65) — less grey than Reinhard c/(c+1)
+            c *= 1.15f;
+            c.x = c.x / (c.x + 0.65f);
+            c.y = c.y / (c.y + 0.65f);
+            c.z = c.z / (c.z + 0.65f);
+
+            float luma = 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+            const float sat = 1.20f;
+            c.x = luma + (c.x - luma) * sat;
+            c.y = luma + (c.y - luma) * sat;
+            c.z = luma + (c.z - luma) * sat;
+            c.y *= 0.94f;
+        }
+
+        // TimeWarp mode already applies sqrt() as its display curve.
+        if (!useTimeWarp) {
+            c.x = std::pow(std::clamp(c.x, 0.0f, 1.0f), 1.0f / 2.2f);
+            c.y = std::pow(std::clamp(c.y, 0.0f, 1.0f), 1.0f / 2.2f);
+            c.z = std::pow(std::clamp(c.z, 0.0f, 1.0f), 1.0f / 2.2f);
+        }
 
         unsigned char color[3];
         color[0] = (unsigned char)(255 * c.x);
