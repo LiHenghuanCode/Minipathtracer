@@ -258,11 +258,39 @@ void JsonParser::parseCamera(Lexer& lex, SceneConfig& cfg) {
     while (t.type != Token::RBRACE) {
         std::string key = t.value;
         expectToken(lex, Token::COLON);
-        if (key == "position") cfg.cameraPos = parseVec3(lex);
+        if (key == "enabled") cfg.cameraEnabled = expectBool(lex);
+        else if (key == "position") cfg.cameraPos = parseVec3(lex);
         else if (key == "lookAt") cfg.cameraLookAt = parseVec3(lex);
         else if (key == "up" || key == "cameraUp") cfg.cameraUp = parseVec3(lex);
         else if (key == "right" || key == "cameraRight") cfg.cameraRight = parseVec3(lex);
         else if (key == "fov") cfg.fov = expectNumber(lex);
+        else skipValue(lex);
+
+        t = lex.next();
+        if (t.type == Token::COMMA) t = lex.next();
+    }
+}
+
+void JsonParser::parseSecondaryCamera(Lexer& lex, SceneConfig& cfg) {
+    cfg.secondaryCameraEnabled = true;
+    cfg.secondaryCameraPos = cfg.cameraPos;
+    cfg.secondaryCameraLookAt = cfg.cameraLookAt;
+    cfg.secondaryCameraRight = cfg.cameraRight;
+    cfg.secondaryCameraUp = cfg.cameraUp;
+    cfg.secondaryFov = cfg.fov;
+
+    expectToken(lex, Token::LBRACE);
+    Token t = lex.next();
+    while (t.type != Token::RBRACE) {
+        std::string key = t.value;
+        expectToken(lex, Token::COLON);
+        if (key == "enabled") cfg.secondaryCameraEnabled = expectBool(lex);
+        else if (key == "position") cfg.secondaryCameraPos = parseVec3(lex);
+        else if (key == "lookAt") cfg.secondaryCameraLookAt = parseVec3(lex);
+        else if (key == "up" || key == "cameraUp") cfg.secondaryCameraUp = parseVec3(lex);
+        else if (key == "right" || key == "cameraRight") cfg.secondaryCameraRight = parseVec3(lex);
+        else if (key == "fov") cfg.secondaryFov = expectNumber(lex);
+        else if (key == "output") cfg.secondaryOutputFile = expectString(lex);
         else skipValue(lex);
 
         t = lex.next();
@@ -455,6 +483,7 @@ void JsonParser::parseInto(const std::string& filename, SceneConfig& cfg) {
 
         if (key == "render") parseRender(lex, cfg);
         else if (key == "camera") parseCamera(lex, cfg);
+        else if (key == "camera2" || key == "secondaryCamera") parseSecondaryCamera(lex, cfg);
         else if (key == "objects") parseObjects(lex, cfg);
         else if (key == "lighting") parseLighting(lex, cfg);
         else if (key == "sky") parseSky(lex, cfg);
@@ -468,6 +497,9 @@ void JsonParser::parseInto(const std::string& filename, SceneConfig& cfg) {
 
     if (cfg.outputFile != "output.ppm") {
         cfg.outputFile = resolveRelativeTo(baseDir, cfg.outputFile);
+    }
+    if (cfg.secondaryOutputFile != "output_2.ppm") {
+        cfg.secondaryOutputFile = resolveRelativeTo(baseDir, cfg.secondaryOutputFile);
     }
 
     for (auto& obj : cfg.objects) {

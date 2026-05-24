@@ -40,17 +40,27 @@
   "waterForegroundDarkening": 0.06
 },
     "camera": {
-        "position": [35, 5.5, -1.5],
-        "lookAt": [24, 3.2, -0.5],
+        "enabled": false,
+        "position": [34, 4.2, 0.0],
+        "lookAt": [24, 3.2, 0.0],
         "up": [0, 1, 0],
         "right": [0, 0, 0],
-        "fov": 42
+        "fov": 38
+    },
+    "camera2": {
+  "enabled": true,
+  "position": [-1, 39.789, -2],
+  "lookAt": [0.00, 0.14, -1.410],
+  "up": [-0.991, -0.132, 0.0],
+  "right": [0, 0, 0],
+  "fov": 65,
+        "output": "output_2.ppm"
     },
     "objects": [
         {
             "type": "obj",
             "file": "assets/model/8610.obj",
-            "position": [0, 0, 0],
+            "position": [0, -0.3, 0],
             "scale": 1.0,
             "glossyWeight": 0.50,
         "specularBoost": 1.5,
@@ -85,11 +95,11 @@
         }
     },
 "leftMist": {
-  "enabled": false,
-  "center": [-20, 7.0, 28.0],
-  "size": [20.0, 7.8, 26.0],
-  "density": 1.35,
-  "absorption": 1.7,
+  "enabled": true,
+  "center": [-20, 3.0, 28.0],
+  "size": [20.0, 4.4, 26.0],
+  "density": 1.2,
+  "absorption": 1.4,
   "scatteringStrength": 1.55,
   "coverage": 0.32,
   "softness": 0.72,
@@ -97,7 +107,7 @@
   "noiseOffset": [0, 0.8, 0],
   "heightFalloff": 0.88,
   "edgeSoftness": 0.46,
-  "coolAmbientColor": [0.22, 0.23, 0.26],
+  "coolAmbientColor": [0.30, 0.31, 0.33],
   "warmSunColor": [0.62, 0.31, 0.10],
   "sunRimStrength": 1.55,
   "maxAlpha": 0.84,
@@ -105,9 +115,9 @@
   "shadowSteps": 4
 },
 "rightMist": {
-  "enabled": false,
-  "center": [-20, 6.9, -24.0],
-  "size": [20.0, 7.6, 26.0],
+  "enabled": true,
+  "center": [-20, 2.0, -24.0],
+  "size": [20.0, 4.4, 26.0],
   "density": 1.35,
   "absorption": 1.7,
   "scatteringStrength": 1.50,

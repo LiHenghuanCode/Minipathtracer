@@ -51,11 +51,19 @@ struct SceneConfig {
     bool aircraftMirrorDebug = false;
 
     // Camera
+    bool cameraEnabled = true;
     Vec3f cameraPos = Vec3f(0, 1.5f, 5);
     Vec3f cameraLookAt = Vec3f(0, 0.8f, 0);
     Vec3f cameraRight = Vec3f(1, 0, 0);
     Vec3f cameraUp = Vec3f(0, 1, 0);
     float fov = 45.0f;
+    bool secondaryCameraEnabled = false;
+    Vec3f secondaryCameraPos = Vec3f(0, 1.5f, 5);
+    Vec3f secondaryCameraLookAt = Vec3f(0, 0.8f, 0);
+    Vec3f secondaryCameraRight = Vec3f(1, 0, 0);
+    Vec3f secondaryCameraUp = Vec3f(0, 1, 0);
+    float secondaryFov = 45.0f;
+    std::string secondaryOutputFile = "output_2.ppm";
     bool debugMode = false;
     std::string materialDebug = "none";
 

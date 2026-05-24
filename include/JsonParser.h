@@ -29,6 +29,7 @@ private:
 
     static void parseRender(Lexer& lex, SceneConfig& cfg);
     static void parseCamera(Lexer& lex, SceneConfig& cfg);
+    static void parseSecondaryCamera(Lexer& lex, SceneConfig& cfg);
     static void parseObjects(Lexer& lex, SceneConfig& cfg);
     static void parseLighting(Lexer& lex, SceneConfig& cfg);
     static void parseSky(Lexer& lex, SceneConfig& cfg);

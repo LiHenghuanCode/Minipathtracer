@@ -102,6 +102,39 @@ Vec3f applyDisplayTransform(Vec3f c, const SceneConfig& config, int px, int py, 
 }
 
 void Renderer::render(const Scene& scene) {
+    bool renderedAnyView = false;
+
+    if (scene.config.cameraEnabled) {
+        renderView(scene, {
+            scene.config.cameraPos,
+            scene.config.cameraLookAt,
+            scene.config.cameraRight,
+            scene.config.cameraUp,
+            scene.config.fov,
+            scene.config.outputFile
+        });
+        renderedAnyView = true;
+    }
+
+    if (scene.config.secondaryCameraEnabled) {
+        std::cout << "\n=== Secondary camera ===" << std::endl;
+        renderView(scene, {
+            scene.config.secondaryCameraPos,
+            scene.config.secondaryCameraLookAt,
+            scene.config.secondaryCameraRight,
+            scene.config.secondaryCameraUp,
+            scene.config.secondaryFov,
+            scene.config.secondaryOutputFile
+        });
+        renderedAnyView = true;
+    }
+
+    if (!renderedAnyView) {
+        std::cerr << "No enabled cameras; nothing rendered." << std::endl;
+    }
+}
+
+void Renderer::renderView(const Scene& scene, const CameraView& view) {
     if (std::getenv("MINIPATH_MIST_DIAGNOSTICS")) {
         scene.resetMistDiagnostics();
     }
@@ -112,14 +145,14 @@ void Renderer::render(const Scene& scene) {
     std::vector<Vec3f> framebuffer(width * height);
 
     // Camera setup
-    Vec3f eye = scene.config.cameraPos;
-    Vec3f target = scene.config.cameraLookAt;
-    float fov = scene.config.fov;
+    Vec3f eye = view.position;
+    Vec3f target = view.lookAt;
+    float fov = view.fov;
 
     Vec3f forward = (target - eye).normalized();
-    Vec3f upHint = scene.config.cameraUp.length2() > 1e-8f ? scene.config.cameraUp.normalized() : Vec3f(0, 1, 0);
-    Vec3f right = scene.config.cameraRight.length2() > 1e-8f
-        ? scene.config.cameraRight.normalized()
+    Vec3f upHint = view.up.length2() > 1e-8f ? view.up.normalized() : Vec3f(0, 1, 0);
+    Vec3f right = view.right.length2() > 1e-8f
+        ? view.right.normalized()
         : cross(forward, upHint).normalized();
     if (right.length2() < 1e-8f) {
         right = cross(forward, Vec3f(0, 0, 1)).normalized();
@@ -143,7 +176,7 @@ void Renderer::render(const Scene& scene) {
     if (scene.config.debugMode) {
         std::cout << "Rendering debug axes/bounding-box view..." << std::endl;
         renderDebugView(scene, framebuffer, width, height, eye, right, up, forward, scale, aspectRatio);
-        writePPM(scene.config.outputFile, framebuffer, width, height, scene.config);
+        writePPM(view.outputFile, framebuffer, width, height, scene.config);
         return;
     }
 
@@ -230,7 +263,7 @@ void Renderer::render(const Scene& scene) {
         }
     }
 
-    writePPM(scene.config.outputFile, framebuffer, width, height, scene.config);
+    writePPM(view.outputFile, framebuffer, width, height, scene.config);
 }
 
 void Renderer::renderDebugView(const Scene& scene, std::vector<Vec3f>& framebuffer,
