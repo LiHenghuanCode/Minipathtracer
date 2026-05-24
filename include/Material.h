@@ -32,6 +32,7 @@ struct Material {
 
     bool hasEmission() const;
     Vec3f getColor(float u, float v) const;
+    Vec3f getTextureColor(float u, float v) const;
     Vec3f sample(const Vec3f& wi, const Vec3f& normal) const;
     float pdf(const Vec3f& wi, const Vec3f& wo, const Vec3f& normal) const;
     Vec3f eval(const Vec3f& wi, const Vec3f& wo, const Vec3f& normal,

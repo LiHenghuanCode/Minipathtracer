@@ -5,7 +5,9 @@
 #include <cmath>
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <utility>
+#include <limits>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -18,9 +20,92 @@ namespace {
 void printVec3(const char* label, const Vec3f& v) {
     std::cout << label << " = (" << v.x << ", " << v.y << ", " << v.z << ")" << std::endl;
 }
+
+Vec3f applyDisplayTransform(Vec3f c, const SceneConfig& config, int px, int py, int width, int height) {
+    const bool useTimeWarp = config.toneMapping == "timeWarp";
+    const bool useFilmic = config.toneMapping == "filmic";
+    const bool useRawLinear = config.renderMode == "rawLinear" || config.toneMapping == "rawLinear";
+    const float displayExposure = std::max(0.0f, config.displayExposure);
+    const float highlightCompression = std::max(0.0f, config.highlightCompression);
+    const float whitePoint = std::max(1e-4f, config.whitePoint);
+
+    c *= displayExposure;
+
+    if (useRawLinear) {
+        c.x = std::clamp(c.x / whitePoint, 0.0f, 1.0f);
+        c.y = std::clamp(c.y / whitePoint, 0.0f, 1.0f);
+        c.z = std::clamp(c.z / whitePoint, 0.0f, 1.0f);
+        return c;
+    }
+
+    float invW = width > 1 ? 1.0f / (float)(width - 1) : 0.0f;
+    float invH = height > 1 ? 1.0f / (float)(height - 1) : 0.0f;
+    float vx = (float)px * invW * 2.0f - 1.0f;
+    float vy = (float)py * invH * 2.0f - 1.0f;
+    float dist2 = vx * vx + vy * vy;
+
+    if (useTimeWarp) {
+        c.x = 1.0f - std::exp2(-c.x);
+        c.y = 1.0f - std::exp2(-c.y);
+        c.z = 1.0f - std::exp2(-c.z);
+        c.x = std::sqrt(std::clamp(c.x, 0.0f, 1.0f));
+        c.y = std::sqrt(std::clamp(c.y, 0.0f, 1.0f));
+        c.z = std::sqrt(std::clamp(c.z, 0.0f, 1.0f));
+
+        float vignette = 1.0f / (dist2 * 2.5f + 1.0f);
+        c *= vignette;
+        c.x = std::clamp(c.x, 0.0f, 1.0f);
+        c.y = std::clamp(c.y, 0.0f, 1.0f);
+        c.z = std::clamp(c.z, 0.0f, 1.0f);
+        return c;
+    }
+
+    float vign = 1.0f - 0.35f * dist2;
+    c *= std::max(0.0f, vign);
+
+    if (useFilmic) {
+        c.x = c.x / (c.x + whitePoint);
+        c.y = c.y / (c.y + whitePoint);
+        c.z = c.z / (c.z + whitePoint);
+
+        float luma = 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+        const float sat = 1.20f;
+        c.x = luma + (c.x - luma) * sat;
+        c.y = luma + (c.y - luma) * sat;
+        c.z = luma + (c.z - luma) * sat;
+        c.y *= 0.94f;
+    } else {
+        const float w2 = highlightCompression * highlightCompression;
+        auto sqrtV = [](const Vec3f& v) {
+            return Vec3f(std::sqrt(v.x), std::sqrt(v.y), std::sqrt(v.z));
+        };
+        c = c / whitePoint;
+        Vec3f t = (Vec3f(1.0f) - (c + Vec3f(w2))) * 0.5f;
+        c = Vec3f(1.0f) - (sqrtV(t * t + Vec3f(w2)) + t);
+        c.x = std::clamp(c.x, 0.0f, 1.0f);
+        c.y = std::clamp(c.y, 0.0f, 1.0f);
+        c.z = std::clamp(c.z, 0.0f, 1.0f);
+
+        float luma = 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+        const float sat = 1.15f;
+        c.x = luma + (c.x - luma) * sat;
+        c.y = luma + (c.y - luma) * sat;
+        c.z = luma + (c.z - luma) * sat;
+        c.y *= 0.93f;
+    }
+
+    c.x = std::pow(std::clamp(c.x, 0.0f, 1.0f), 1.0f / 2.2f);
+    c.y = std::pow(std::clamp(c.y, 0.0f, 1.0f), 1.0f / 2.2f);
+    c.z = std::pow(std::clamp(c.z, 0.0f, 1.0f), 1.0f / 2.2f);
+    return c;
+}
 }
 
 void Renderer::render(const Scene& scene) {
+    if (std::getenv("MINIPATH_MIST_DIAGNOSTICS")) {
+        scene.resetMistDiagnostics();
+    }
+
     int width = scene.config.width;
     int height = scene.config.height;
     int spp = scene.config.spp;
@@ -94,6 +179,56 @@ void Renderer::render(const Scene& scene) {
         }
     }
     std::cout << "\nRendering complete." << std::endl;
+    scene.printMistDiagnostics();
+
+    if (std::getenv("MINIPATH_TOWER_MIST_DIAGNOSTICS")) {
+        struct RegionStats {
+            const char* name;
+            int x0, x1, y0, y1;
+            int samples = 0;
+            int hits = 0;
+            double alphaSum = 0.0;
+            double maxAlpha = 0.0;
+            Vec3f minP = Vec3f(std::numeric_limits<float>::max());
+            Vec3f maxP = Vec3f(-std::numeric_limits<float>::max());
+        };
+        RegionStats regions[2] = {
+            {"left tower/base region", 0, width / 3, height / 4, height / 2},
+            {"right tower/base region", width * 2 / 3, width - 1, height / 4, height / 2}
+        };
+        for (auto& region : regions) {
+            for (int y = region.y0; y <= region.y1; y += 3) {
+                for (int x = region.x0; x <= region.x1; x += 3) {
+                    float rx = 0.5f;
+                    float ry = 0.5f;
+                    float sx = (2.0f * (x + rx) / (float)width - 1.0f) * aspectRatio * scale;
+                    float sy = (1.0f - 2.0f * (y + ry) / (float)height) * scale;
+                    Ray ray(eye, (forward + right * sx + up * sy).normalized());
+                    Intersection isect;
+                    region.samples++;
+                    if (!scene.tracePrimary(ray, isect)) continue;
+                    region.hits++;
+                    float alpha = scene.mistAlphaToHit(ray, isect.t);
+                    region.alphaSum += alpha;
+                    region.maxAlpha = std::max(region.maxAlpha, (double)alpha);
+                    region.minP = vec_min(region.minP, isect.position);
+                    region.maxP = vec_max(region.maxP, isect.position);
+                }
+            }
+        }
+        std::cout << "Tower-region mist diagnostics:" << std::endl;
+        for (const auto& region : regions) {
+            double denom = std::max(region.hits, 1);
+            std::cout << "  " << region.name
+                      << ": samples=" << region.samples
+                      << ", hits=" << region.hits
+                      << ", avg mist alpha to hit=" << (region.alphaSum / denom)
+                      << ", max mist alpha to hit=" << region.maxAlpha
+                      << ", hit bounds min=(" << region.minP.x << ", " << region.minP.y << ", " << region.minP.z << ")"
+                      << ", max=(" << region.maxP.x << ", " << region.maxP.y << ", " << region.maxP.z << ")"
+                      << std::endl;
+        }
+    }
 
     writePPM(scene.config.outputFile, framebuffer, width, height, scene.config);
 }
@@ -187,88 +322,13 @@ void Renderer::writePPM(const std::string& filename, const std::vector<Vec3f>& f
         return;
     }
 
-    const bool useTimeWarp = config.toneMapping == "timeWarp";
-    const bool useSoftWhiteClamp = config.toneMapping != "filmic" && !useTimeWarp;
-    const float displayExposure = std::max(0.0f, config.displayExposure);
-
     fprintf(fp, "P6\n%d %d\n255\n", width, height);
     for (int i = 0; i < width * height; ++i) {
         Vec3f c = framebuffer[i];
 
         int px = i % width;
         int py = i / width;
-        float invW = width > 1 ? 1.0f / (float)(width - 1) : 0.0f;
-        float invH = height > 1 ? 1.0f / (float)(height - 1) : 0.0f;
-        float vx = (float)px * invW * 2.0f - 1.0f;
-        float vy = (float)py * invH * 2.0f - 1.0f;
-        float dist2 = vx * vx + vy * vy;
-
-        if (useTimeWarp) {
-            c *= displayExposure;
-            c.x = 1.0f - std::exp2(-c.x);
-            c.y = 1.0f - std::exp2(-c.y);
-            c.z = 1.0f - std::exp2(-c.z);
-            c.x = std::sqrt(std::clamp(c.x, 0.0f, 1.0f));
-            c.y = std::sqrt(std::clamp(c.y, 0.0f, 1.0f));
-            c.z = std::sqrt(std::clamp(c.z, 0.0f, 1.0f));
-
-            float vignette = 1.0f / (dist2 * 2.5f + 1.0f);
-            c *= vignette;
-        } else {
-            // Vignette — darken edges so the orange horizon doesn't bleed uniformly.
-            float vign = 1.0f - 0.35f * dist2;
-            c *= std::max(0.0f, vign);
-        }
-
-        if (useTimeWarp) {
-            c.x = std::clamp(c.x, 0.0f, 1.0f);
-            c.y = std::clamp(c.y, 0.0f, 1.0f);
-            c.z = std::clamp(c.z, 0.0f, 1.0f);
-        } else if (useSoftWhiteClamp) {
-            // Soft-white-clamp cinematic curve (reference car-paint shader style).
-            // Maps [0,∞) smoothly to [0,1): highlights roll off to near-white instead
-            // of hard-clipping, giving brighter aircraft whites and a vivid sky.
-            // Tune: raise exposure (1.3) to brighten; raise w (0.15) to soften knee.
-            c *= 1.3f;
-
-            const float w2 = 0.15f * 0.15f;
-            auto sqrtV = [](const Vec3f& v) {
-                return Vec3f(std::sqrt(v.x), std::sqrt(v.y), std::sqrt(v.z));
-            };
-            Vec3f t = (Vec3f(1.0f) - (c + Vec3f(w2))) * 0.5f;
-            c = Vec3f(1.0f) - (sqrtV(t * t + Vec3f(w2)) + t);
-            c.x = std::clamp(c.x, 0.0f, 1.0f);
-            c.y = std::clamp(c.y, 0.0f, 1.0f);
-            c.z = std::clamp(c.z, 0.0f, 1.0f);
-
-            // Saturation + green trim before gamma
-            float luma = 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
-            const float sat = 1.15f;
-            c.x = luma + (c.x - luma) * sat;
-            c.y = luma + (c.y - luma) * sat;
-            c.z = luma + (c.z - luma) * sat;
-            c.y *= 0.93f;
-        } else {
-            // Filmic: c/(c+0.65) — less grey than Reinhard c/(c+1)
-            c *= 1.15f;
-            c.x = c.x / (c.x + 0.65f);
-            c.y = c.y / (c.y + 0.65f);
-            c.z = c.z / (c.z + 0.65f);
-
-            float luma = 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
-            const float sat = 1.20f;
-            c.x = luma + (c.x - luma) * sat;
-            c.y = luma + (c.y - luma) * sat;
-            c.z = luma + (c.z - luma) * sat;
-            c.y *= 0.94f;
-        }
-
-        // TimeWarp mode already applies sqrt() as its display curve.
-        if (!useTimeWarp) {
-            c.x = std::pow(std::clamp(c.x, 0.0f, 1.0f), 1.0f / 2.2f);
-            c.y = std::pow(std::clamp(c.y, 0.0f, 1.0f), 1.0f / 2.2f);
-            c.z = std::pow(std::clamp(c.z, 0.0f, 1.0f), 1.0f / 2.2f);
-        }
+        c = applyDisplayTransform(c, config, px, py, width, height);
 
         unsigned char color[3];
         color[0] = (unsigned char)(255 * c.x);

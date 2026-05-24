@@ -95,6 +95,13 @@ Vec3f Material::getColor(float u, float v) const {
     return color;
 }
 
+Vec3f Material::getTextureColor(float u, float v) const {
+    if (texture && texture->isLoaded()) {
+        return texture->sample(u, v);
+    }
+    return color;
+}
+
 float Material::clampedRoughness() const {
     return std::clamp(roughness, 0.02f, 1.0f);
 }

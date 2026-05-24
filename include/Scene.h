@@ -10,6 +10,7 @@
 #include <string>
 #include <memory>
 #include <map>
+#include <mutex>
 
 struct AreaLightSource {
     Vec3f center;
@@ -40,7 +41,10 @@ struct SceneConfig {
     int spp = 64;
     int maxDepth = 8;
     std::string toneMapping = "softWhiteClamp";
+    std::string renderMode = "toneMapped";
     float displayExposure = 1.0f;
+    float highlightCompression = 0.15f;
+    float whitePoint = 1.0f;
     float aircraftClearcoatStrength = 0.35f;
     float aircraftClearcoatEnvBoost = 1.5f;
     float aircraftClearcoatF0 = 0.10f;
@@ -66,8 +70,14 @@ struct SceneConfig {
         Vec3f sunGlowColor = Vec3f(2.0f,  0.75f, 0.22f);  // warm wide glow
         float sunDiskPower     = 500.0f;  // tightness of sun disk
         float sunGlowPower     = 10.0f;   // spread of sun glow
+        float sunAngularRadius = 0.00935f;
+        float sunEdgeSoftness = 0.006f;
+        float sunIntensity = 1.0f;
         float sunDiskIntensity = 1.2f;
         float sunGlowIntensity = 1.8f;
+        float skyIntensity = 1.0f;
+        float horizonWarmth = 1.0f;
+        float sunsetGradientStrength = 1.0f;
         // Cloud fields — parsed now, used in Stage 4
         bool  cloudsEnabled  = false;
         float cloudScale     = 3.5f;
@@ -86,6 +96,56 @@ struct SceneConfig {
         float cloudSunFocusPower    = 2.0f;
     };
     SkyConfig sky;
+
+    // Local volumetric mist / sea-fog banks
+    struct MistVolumeConfig {
+        bool    enabled          = false;
+        Vec3f   center           = Vec3f(0, 1, 10);
+        Vec3f   size             = Vec3f(15, 2, 6);   // half-extents
+        float   density          = 0.10f;
+        float   absorption       = 0.30f;
+        float   scatteringStrength = 0.65f;
+        float   coverage         = 0.28f;
+        float   softness         = 2.5f;
+        float   noiseScale       = 0.08f;
+        Vec3f   noiseOffset      = Vec3f(0, 0, 0);
+        float   heightFalloff    = 1.6f;
+        float   edgeSoftness     = 0.20f;
+        Vec3f   coolAmbientColor = Vec3f(0.30f, 0.36f, 0.52f);
+        Vec3f   warmSunColor     = Vec3f(0.88f, 0.65f, 0.30f);
+        float   sunRimStrength   = 1.0f;
+        float   maxAlpha         = 0.50f;
+        int     marchSteps       = 20;
+        int     shadowSteps      = 4;
+    };
+    MistVolumeConfig leftMist;
+    MistVolumeConfig rightMist;
+
+    // Water-only reflection controls. These do not alter aircraft materials or shading.
+    float waterReflectionStrength = 0.75f;
+    float waterSunReflectionStrength = 1.0f;
+    float waterWarmth = 0.25f;
+    float waterRoughness = 0.45f;
+    float waterNormalStrength = 1.0f;
+    float skyFillStrength = 1.0f;
+    float horizonFillStrength = 1.0f;
+    float waterBounceStrength = 0.0f;
+    Vec3f waterBounceColor = Vec3f(1.0f, 0.56f, 0.22f);
+    Vec3f waterBounceDirection = Vec3f(0.0f, -1.0f, 0.0f);
+    float waterBounceFalloff = 1.0f;
+    float waterBounceMaxContribution = 0.08f;
+    Vec3f upperSkyFillColor = Vec3f(0.45f, 0.55f, 0.80f);
+    float environmentDiffuseStrength = 1.0f;
+    float environmentReflectionStrength = 1.0f;
+    float ambientStrength = 1.0f;
+    float shadowLift = 0.0f;
+    float waterReflectionFloor = 0.04f;
+    float waterFresnelBias = 0.0f;
+    float waterRefractionWeight = 1.0f;
+    float waterBaseAbsorption = 0.33f;
+    float waterForegroundDarkening = 0.0f;
+    float waterLargeWaveScale = 1.0f;
+    float waterSmallWaveScale = 0.35f;
 
     // Lighting
     struct AreaLightConfig {
@@ -128,6 +188,10 @@ public:
     void loadFromConfig(const SceneConfig& config);
     Vec3f castRay(const Ray& ray, int depth) const;
     const AABB& bounds() const { return sceneBounds; }
+    void resetMistDiagnostics() const;
+    void printMistDiagnostics() const;
+    bool tracePrimary(const Ray& ray, Intersection& isect) const;
+    float mistAlphaToHit(const Ray& ray, float hitT) const;
 
     SceneConfig config;
 
@@ -143,12 +207,36 @@ private:
 
     // Sky color based on ray direction
     Vec3f skyColor(const Vec3f& direction) const;
+    Vec3f sunDiskColor(const Vec3f& direction) const;
+
+    // Volumetric mist helpers
+    struct MistSample { Vec3f color; float transmittance; };
+    MistSample renderMistVolume(const Ray& ray,
+                                const SceneConfig::MistVolumeConfig& vol,
+                                float maxT) const;
+    Vec3f compositeMist(const Ray& ray, float hitT, Vec3f sceneColor) const;
+    void recordMistDiagnostics(bool leftAabbHit, bool rightAabbHit,
+                               float alpha, const Vec3f& mistColor,
+                               const Vec3f& before, const Vec3f& after) const;
+
+    struct MistDiagnostics {
+        uint64_t compositeCalls = 0;
+        uint64_t leftAabbHits = 0;
+        uint64_t rightAabbHits = 0;
+        uint64_t changedPixels = 0;
+        double alphaSum = 0.0;
+        double maxAlpha = 0.0;
+        Vec3f mistColorSum = Vec3f(0.0f);
+    };
+    mutable std::mutex mistDiagnosticsMutex;
+    mutable MistDiagnostics mistDiagnostics;
 
     std::vector<Triangle> triangles;
     std::vector<Material> materials;
     std::map<std::string, int> materialMap; // name -> index
     std::vector<std::unique_ptr<Texture>> textures;
     std::unique_ptr<Ocean> ocean;
+    std::unique_ptr<Ocean> oceanRipple;
     AreaLightSource areaLight;
     bool hasAreaLight = false;
     BVH bvh;
