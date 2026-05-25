@@ -138,6 +138,7 @@ void Renderer::renderView(const Scene& scene, const CameraView& view) {
     if (std::getenv("MINIPATH_MIST_DIAGNOSTICS")) {
         scene.resetMistDiagnostics();
     }
+    scene.resetMaterialRoleDiagnostics();
 
     int width = scene.config.width;
     int height = scene.config.height;
@@ -212,6 +213,7 @@ void Renderer::renderView(const Scene& scene, const CameraView& view) {
         }
     }
     std::cout << "\nRendering complete." << std::endl;
+    scene.printMaterialRoleDiagnostics();
     scene.printMistDiagnostics();
 
     if (std::getenv("MINIPATH_TOWER_MIST_DIAGNOSTICS")) {

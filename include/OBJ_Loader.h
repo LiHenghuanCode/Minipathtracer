@@ -663,7 +663,17 @@ namespace objl
 					#endif
 
 					// Load Materials
-					LoadMaterials(pathtomat);
+					if (!LoadMaterials(pathtomat))
+					{
+						std::string fallbackmat = Path.substr(0, Path.size() - 4) + ".mtl";
+						if (fallbackmat != pathtomat)
+						{
+							#ifdef OBJL_CONSOLE_OUTPUT
+							std::cout << "- failed to load materials, trying: " << fallbackmat << std::endl;
+							#endif
+							LoadMaterials(fallbackmat);
+						}
+					}
 				}
 			}
 
@@ -1144,7 +1154,11 @@ namespace objl
 					tempMaterial.map_d = algorithm::tail(curline);
 				}
 				// Bump Map
-				if (algorithm::firstToken(curline) == "map_Bump" || algorithm::firstToken(curline) == "map_bump" || algorithm::firstToken(curline) == "bump")
+				if (algorithm::firstToken(curline) == "map_Bump" ||
+					algorithm::firstToken(curline) == "map_bump" ||
+					algorithm::firstToken(curline) == "bump" ||
+					algorithm::firstToken(curline) == "norm" ||
+					algorithm::firstToken(curline) == "normal")
 				{
 					tempMaterial.map_bump = algorithm::tail(curline);
 				}

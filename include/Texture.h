@@ -10,6 +10,7 @@ public:
 
     bool load(const std::string& path);
     Vec3f sample(float u, float v) const;  // bilinear interpolation
+    Vec3f sampleNearest(float u, float v) const;
     bool isLoaded() const { return data != nullptr; }
 
 private:

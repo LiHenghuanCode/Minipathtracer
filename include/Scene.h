@@ -11,6 +11,8 @@
 #include <memory>
 #include <map>
 #include <mutex>
+#include <array>
+#include <atomic>
 
 struct AreaLightSource {
     Vec3f center;
@@ -49,6 +51,33 @@ struct SceneConfig {
     float aircraftClearcoatEnvBoost = 1.5f;
     float aircraftClearcoatF0 = 0.10f;
     bool aircraftMirrorDebug = false;
+    float normalStrength = 0.45f;
+    float normalDetailStrength = 1.2f;
+    bool flipNormalGreen = false;
+    bool debugNormalMap = false;
+    bool sharpNormalSampling = false;
+    bool canopyGlassUsePhysical = false;
+    float canopyGlassIOR = 1.52f;
+    float canopyGlassF0 = 0.043f;
+    float canopyGlassReflectionBoost = 1.05f;
+    Vec3f canopyGlassTransmissionTint = Vec3f(0.55f, 0.72f, 0.90f);
+    Vec3f canopyGlassCoolReflectionFactor = Vec3f(0.80f, 0.88f, 1.0f);
+    float canopyGlassCenterDarkness = 0.70f;
+    float canopyFresnelPower = 2.2f;
+    float canopyFresnelBase = 0.25f;
+    float canopyReflectionMix = 0.65f;
+    float canopyGlintStrength = 5.0f;
+    float canopyBrightnessBoost = 1.5f;
+    float canopyInteriorDarkness = 0.70f;
+    Vec3f canopyCoolReflection = Vec3f(0.45f, 0.60f, 1.05f);
+    Vec3f canopySmokedCenter = Vec3f(0.005f, 0.018f, 0.035f);
+    Vec3f propellerAfterimageColor = Vec3f(0.12f, 0.12f, 0.13f);
+    float propellerAfterimageAlpha = 0.40f;
+    float propellerAfterimageStackReduction = 0.45f;
+    bool debugMaterialRoles = false;
+    bool debugCanopyExtreme = false;
+    bool debugPropellerAfterimageExtreme = false;
+    bool debugFakeCockpitPattern = false;
 
     // Camera
     bool cameraEnabled = true;
@@ -198,6 +227,8 @@ public:
     const AABB& bounds() const { return sceneBounds; }
     void resetMistDiagnostics() const;
     void printMistDiagnostics() const;
+    void resetMaterialRoleDiagnostics() const;
+    void printMaterialRoleDiagnostics() const;
     bool tracePrimary(const Ray& ray, Intersection& isect) const;
     float mistAlphaToHit(const Ray& ray, float hitT) const;
 
@@ -212,6 +243,14 @@ private:
                              float texU, float texV) const;
     Vec3f sampleAreaLight(const Vec3f& hitPoint, const Vec3f& wi, const Vec3f& N, const Material& mat,
                           float texU, float texV) const;
+    Vec3f shadeCanopyGlassPhysical(const Ray& ray, const Intersection& isect,
+                                   const Material& mat, const Vec3f& N, int depth) const;
+    Vec3f shadeCanopyGlassFake(const Ray& ray, const Intersection& isect,
+                               const Material& mat, const Vec3f& N, int depth) const;
+    Vec3f shadePropellerAfterimage(const Ray& ray, const Intersection& isect,
+                                   const Material& mat, const Vec3f& N, int depth) const;
+    Vec3f shadeAircraftMetal(const Ray& ray, const Intersection& isect,
+                             const Material& mat, const Vec3f& N, int depth) const;
 
     // Sky color based on ray direction
     Vec3f skyColor(const Vec3f& direction) const;
@@ -238,6 +277,7 @@ private:
     };
     mutable std::mutex mistDiagnosticsMutex;
     mutable MistDiagnostics mistDiagnostics;
+    mutable std::array<std::atomic<uint64_t>, 6> primaryRoleHits{};
 
     std::vector<Triangle> triangles;
     std::vector<Material> materials;

@@ -51,3 +51,15 @@ Vec3f Texture::sample(float u, float v) const {
     Vec3f bot = c01 * (1 - sx) + c11 * sx;
     return top * (1 - sy) + bot * sy;
 }
+
+Vec3f Texture::sampleNearest(float u, float v) const {
+    if (!data) return Vec3f(1, 0, 1); // magenta = missing texture
+
+    u = u - std::floor(u);
+    v = 1.0f - (v - std::floor(v)); // flip V (OBJ convention)
+
+    int x = std::clamp((int)std::round(u * (width - 1)), 0, width - 1);
+    int y = std::clamp((int)std::round(v * (height - 1)), 0, height - 1);
+    int idx = (y * width + x) * 3;
+    return Vec3f(data[idx] / 255.0f, data[idx + 1] / 255.0f, data[idx + 2] / 255.0f);
+}

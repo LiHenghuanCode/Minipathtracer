@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk '/^o Object_42_Object_19/{inobj=1} inobj && /^v /{x=$2; y=$3; z=$4; if\\(NR==first\\){minx=x;maxx=x;miny=y;maxy=y;minz=z;maxz=z} else {if\\(x<minx\\)minx=x; if\\(x>maxx\\)maxx=x; if\\(y<miny\\)miny=y; if\\(y>maxy\\)maxy=y; if\\(z<minz\\)minz=z; if\\(z>maxz\\)maxz=z}; first=NR} inobj && /^f/{hasFace=1} inobj && /^o / && hasFace{print \"Object_42_Object_19 bbox: x[\"minx\",\"maxx\"] y[\"miny\",\"maxy\"] z[\"minz\",\"maxz\"]; exit}' /home/stella/comp8610_labs/Minipathtracer/assets/model/8610.obj)",
+      "Bash(awk '/^o Object_24.001_Object_10.001/{inobj=1; minx=1e9;maxx=-1e9;miny=1e9;maxy=-1e9;minz=1e9;maxz=-1e9} inobj && /^v /{x=$2; y=$3; z=$4; if\\(x<minx\\)minx=x; if\\(x>maxx\\)maxx=x; if\\(y<miny\\)miny=y; if\\(y>maxy\\)maxy=y; if\\(z<minz\\)minz=z; if\\(z>maxz\\)maxz=z} inobj && /^o / && /Object_26/{print \"Object_24.001 bbox: x[\"minx\",\"maxx\"] y[\"miny\",\"maxy\"] z[\"minz\",\"maxz\"]; exit}' /home/stella/comp8610_labs/Minipathtracer/assets/model/8610.obj)",
+      "Bash(python3 -c ' *)",
+      "Bash(make -j4)",
+      "Bash(./pathtracer ../config/scene.json)",
+      "Bash(../build/pathtracer ../config/scene_propeller_debug.json)",
+      "Bash(cp /home/stella/comp8610_labs/Minipathtracer/config/propeller_material_debug.ppm /home/stella/comp8610_labs/Minipathtracer/propeller_material_debug.ppm)",
+      "Bash(./pathtracer ../config/scene_extreme_debug.json)",
+      "Bash(python3)",
+      "Bash(build/pathtracer config/scene_cockpit_debug.json)",
+      "Bash(time build/pathtracer config/scene.json)"
+    ]
+  }
+}

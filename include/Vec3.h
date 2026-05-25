@@ -59,7 +59,9 @@ inline Vec3f reflect(const Vec3f& I, const Vec3f& N) {
 
 struct Ray {
     Vec3f origin, direction;
+    bool hasPassedPropellerAfterimage = false;
     Ray() {}
-    Ray(const Vec3f& o, const Vec3f& d) : origin(o), direction(d) {}
+    Ray(const Vec3f& o, const Vec3f& d, bool passedAfterimage = false)
+        : origin(o), direction(d), hasPassedPropellerAfterimage(passedAfterimage) {}
     Vec3f at(float t) const { return origin + direction * t; }
 };
