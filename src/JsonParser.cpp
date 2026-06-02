@@ -448,41 +448,19 @@ void JsonParser::parseSky(Lexer& lex, SceneConfig& cfg) {
     }
 }
 
-void JsonParser::parseMistVolume(Lexer& lex, SceneConfig::MistVolumeConfig& vol) {
-    expectToken(lex, Token::LBRACE);
-    Token t = lex.next();
-    while (t.type != Token::RBRACE) {
-        std::string key = t.value;
-        expectToken(lex, Token::COLON);
-        if      (key == "enabled")            vol.enabled            = expectBool(lex);
-        else if (key == "center")             vol.center             = parseVec3(lex);
-        else if (key == "size")               vol.size               = parseVec3(lex);
-        else if (key == "density")            vol.density            = expectNumber(lex);
-        else if (key == "absorption")         vol.absorption         = expectNumber(lex);
-        else if (key == "scatteringStrength")  vol.scatteringStrength = expectNumber(lex);
-        else if (key == "coverage")           vol.coverage           = expectNumber(lex);
-        else if (key == "softness")           vol.softness           = expectNumber(lex);
-        else if (key == "noiseScale")         vol.noiseScale         = expectNumber(lex);
-        else if (key == "noiseOffset")        vol.noiseOffset        = parseVec3(lex);
-        else if (key == "heightFalloff")      vol.heightFalloff      = expectNumber(lex);
-        else if (key == "edgeSoftness")       vol.edgeSoftness       = expectNumber(lex);
-        else if (key == "coolAmbientColor")   vol.coolAmbientColor   = parseVec3(lex);
-        else if (key == "warmSunColor")       vol.warmSunColor       = parseVec3(lex);
-        else if (key == "sunRimStrength")     vol.sunRimStrength     = expectNumber(lex);
-        else if (key == "maxAlpha")           vol.maxAlpha           = expectNumber(lex);
-        else if (key == "marchSteps")         vol.marchSteps         = (int)expectNumber(lex);
-        else if (key == "shadowSteps")        vol.shadowSteps        = (int)expectNumber(lex);
-        else skipValue(lex);
-
-        t = lex.next();
-        if (t.type == Token::COMMA) t = lex.next();
-    }
-}
-
 // ===== Main parse =====
 
 SceneConfig JsonParser::parse(const std::string& filename) {
     SceneConfig cfg;
+
+    // Load finalized parameters first so scene.json can selectively override them.
+    // Look for locked_settings.json beside the scene file; skip silently if absent.
+    std::filesystem::path scenePath = resolveInputPath(filename);
+    std::filesystem::path lockedPath = scenePath.parent_path() / "locked_settings.json";
+    if (std::filesystem::exists(lockedPath)) {
+        parseInto(lockedPath.string(), cfg);
+    }
+
     parseInto(filename, cfg);
     return cfg;
 }
@@ -514,8 +492,6 @@ void JsonParser::parseInto(const std::string& filename, SceneConfig& cfg) {
         else if (key == "objects") parseObjects(lex, cfg);
         else if (key == "lighting") parseLighting(lex, cfg);
         else if (key == "sky") parseSky(lex, cfg);
-        else if (key == "leftMist")  parseMistVolume(lex, cfg.leftMist);
-        else if (key == "rightMist") parseMistVolume(lex, cfg.rightMist);
         else skipValue(lex);
 
         t = lex.next();

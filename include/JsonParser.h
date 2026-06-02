@@ -33,7 +33,6 @@ private:
     static void parseObjects(Lexer& lex, SceneConfig& cfg);
     static void parseLighting(Lexer& lex, SceneConfig& cfg);
     static void parseSky(Lexer& lex, SceneConfig& cfg);
-    static void parseMistVolume(Lexer& lex, SceneConfig::MistVolumeConfig& vol);
 
     static float expectNumber(Lexer& lex);
     static bool expectBool(Lexer& lex);

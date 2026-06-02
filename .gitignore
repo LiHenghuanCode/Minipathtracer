@@ -33,3 +33,7 @@ pathtracer
 Thumbs.db
 .vscode/
 .idea/
+
+# Claude and Codex local config
+.claude/
+.codex/

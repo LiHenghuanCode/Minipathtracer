@@ -10,7 +10,6 @@
 #include <string>
 #include <memory>
 #include <map>
-#include <mutex>
 #include <array>
 #include <atomic>
 
@@ -134,30 +133,6 @@ struct SceneConfig {
     };
     SkyConfig sky;
 
-    // Local volumetric mist / sea-fog banks
-    struct MistVolumeConfig {
-        bool    enabled          = false;
-        Vec3f   center           = Vec3f(0, 1, 10);
-        Vec3f   size             = Vec3f(15, 2, 6);   // half-extents
-        float   density          = 0.10f;
-        float   absorption       = 0.30f;
-        float   scatteringStrength = 0.65f;
-        float   coverage         = 0.28f;
-        float   softness         = 2.5f;
-        float   noiseScale       = 0.08f;
-        Vec3f   noiseOffset      = Vec3f(0, 0, 0);
-        float   heightFalloff    = 1.6f;
-        float   edgeSoftness     = 0.20f;
-        Vec3f   coolAmbientColor = Vec3f(0.30f, 0.36f, 0.52f);
-        Vec3f   warmSunColor     = Vec3f(0.88f, 0.65f, 0.30f);
-        float   sunRimStrength   = 1.0f;
-        float   maxAlpha         = 0.50f;
-        int     marchSteps       = 20;
-        int     shadowSteps      = 4;
-    };
-    MistVolumeConfig leftMist;
-    MistVolumeConfig rightMist;
-
     // Water-only reflection controls. These do not alter aircraft materials or shading.
     float waterReflectionStrength = 0.75f;
     float waterSunReflectionStrength = 1.0f;
@@ -225,12 +200,9 @@ public:
     void loadFromConfig(const SceneConfig& config);
     Vec3f castRay(const Ray& ray, int depth) const;
     const AABB& bounds() const { return sceneBounds; }
-    void resetMistDiagnostics() const;
-    void printMistDiagnostics() const;
     void resetMaterialRoleDiagnostics() const;
     void printMaterialRoleDiagnostics() const;
     bool tracePrimary(const Ray& ray, Intersection& isect) const;
-    float mistAlphaToHit(const Ray& ray, float hitT) const;
 
     SceneConfig config;
 
@@ -239,6 +211,7 @@ private:
     void addPlane(const SceneConfig::ObjectEntry& entry);
     void createAreaLight();
     void buildBVH();
+    void loadOcean();
     Vec3f materialDebugColor(const Material& mat, const Vec3f& normal,
                              float texU, float texV) const;
     Vec3f sampleAreaLight(const Vec3f& hitPoint, const Vec3f& wi, const Vec3f& N, const Material& mat,
@@ -256,27 +229,6 @@ private:
     Vec3f skyColor(const Vec3f& direction) const;
     Vec3f sunDiskColor(const Vec3f& direction) const;
 
-    // Volumetric mist helpers
-    struct MistSample { Vec3f color; float transmittance; };
-    MistSample renderMistVolume(const Ray& ray,
-                                const SceneConfig::MistVolumeConfig& vol,
-                                float maxT) const;
-    Vec3f compositeMist(const Ray& ray, float hitT, Vec3f sceneColor) const;
-    void recordMistDiagnostics(bool leftAabbHit, bool rightAabbHit,
-                               float alpha, const Vec3f& mistColor,
-                               const Vec3f& before, const Vec3f& after) const;
-
-    struct MistDiagnostics {
-        uint64_t compositeCalls = 0;
-        uint64_t leftAabbHits = 0;
-        uint64_t rightAabbHits = 0;
-        uint64_t changedPixels = 0;
-        double alphaSum = 0.0;
-        double maxAlpha = 0.0;
-        Vec3f mistColorSum = Vec3f(0.0f);
-    };
-    mutable std::mutex mistDiagnosticsMutex;
-    mutable MistDiagnostics mistDiagnostics;
     mutable std::array<std::atomic<uint64_t>, 6> primaryRoleHits{};
 
     std::vector<Triangle> triangles;

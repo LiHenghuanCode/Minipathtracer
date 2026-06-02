@@ -5,9 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include <atomic>
-#include <cstdlib>
 #include <utility>
-#include <limits>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -135,9 +133,6 @@ void Renderer::render(const Scene& scene) {
 }
 
 void Renderer::renderView(const Scene& scene, const CameraView& view) {
-    if (std::getenv("MINIPATH_MIST_DIAGNOSTICS")) {
-        scene.resetMistDiagnostics();
-    }
     scene.resetMaterialRoleDiagnostics();
 
     int width = scene.config.width;
@@ -214,56 +209,6 @@ void Renderer::renderView(const Scene& scene, const CameraView& view) {
     }
     std::cout << "\nRendering complete." << std::endl;
     scene.printMaterialRoleDiagnostics();
-    scene.printMistDiagnostics();
-
-    if (std::getenv("MINIPATH_TOWER_MIST_DIAGNOSTICS")) {
-        struct RegionStats {
-            const char* name;
-            int x0, x1, y0, y1;
-            int samples = 0;
-            int hits = 0;
-            double alphaSum = 0.0;
-            double maxAlpha = 0.0;
-            Vec3f minP = Vec3f(std::numeric_limits<float>::max());
-            Vec3f maxP = Vec3f(-std::numeric_limits<float>::max());
-        };
-        RegionStats regions[2] = {
-            {"left tower/base region", 0, width / 3, height / 4, height / 2},
-            {"right tower/base region", width * 2 / 3, width - 1, height / 4, height / 2}
-        };
-        for (auto& region : regions) {
-            for (int y = region.y0; y <= region.y1; y += 3) {
-                for (int x = region.x0; x <= region.x1; x += 3) {
-                    float rx = 0.5f;
-                    float ry = 0.5f;
-                    float sx = (2.0f * (x + rx) / (float)width - 1.0f) * aspectRatio * scale;
-                    float sy = (1.0f - 2.0f * (y + ry) / (float)height) * scale;
-                    Ray ray(eye, (forward + right * sx + up * sy).normalized());
-                    Intersection isect;
-                    region.samples++;
-                    if (!scene.tracePrimary(ray, isect)) continue;
-                    region.hits++;
-                    float alpha = scene.mistAlphaToHit(ray, isect.t);
-                    region.alphaSum += alpha;
-                    region.maxAlpha = std::max(region.maxAlpha, (double)alpha);
-                    region.minP = vec_min(region.minP, isect.position);
-                    region.maxP = vec_max(region.maxP, isect.position);
-                }
-            }
-        }
-        std::cout << "Tower-region mist diagnostics:" << std::endl;
-        for (const auto& region : regions) {
-            double denom = std::max(region.hits, 1);
-            std::cout << "  " << region.name
-                      << ": samples=" << region.samples
-                      << ", hits=" << region.hits
-                      << ", avg mist alpha to hit=" << (region.alphaSum / denom)
-                      << ", max mist alpha to hit=" << region.maxAlpha
-                      << ", hit bounds min=(" << region.minP.x << ", " << region.minP.y << ", " << region.minP.z << ")"
-                      << ", max=(" << region.maxP.x << ", " << region.maxP.y << ", " << region.maxP.z << ")"
-                      << std::endl;
-        }
-    }
 
     writePPM(view.outputFile, framebuffer, width, height, scene.config);
 }
