@@ -24,6 +24,7 @@ Vec3f applyDisplayTransform(Vec3f c, const SceneConfig& config, int px, int py, 
     const bool useTimeWarp = render.toneMapping == "timeWarp";
     const bool useFilmic = render.toneMapping == "filmic";
     const bool useRawLinear = render.toneMapping == "rawLinear";
+    const bool useSoftWhiteClamp = render.toneMapping.empty() || render.toneMapping == "softWhiteClamp";
     const float displayExposure = std::max(0.0f, render.displayExposure);
     const float highlightCompression = std::max(0.0f, render.highlightCompression);
     const float whitePoint = std::max(1e-4f, render.whitePoint);
@@ -73,7 +74,7 @@ Vec3f applyDisplayTransform(Vec3f c, const SceneConfig& config, int px, int py, 
         c.y = luma + (c.y - luma) * sat;
         c.z = luma + (c.z - luma) * sat;
         c.y *= 0.94f;
-    } else {
+    } else if (useSoftWhiteClamp || (!useFilmic && !useTimeWarp && !useRawLinear)) {
         const float w2 = highlightCompression * highlightCompression;
         auto sqrtV = [](const Vec3f& v) {
             return Vec3f(std::sqrt(v.x), std::sqrt(v.y), std::sqrt(v.z));
@@ -115,16 +116,14 @@ void Renderer::renderView(const Scene& scene) {
     int spp = scene.config.render.spp;
     std::vector<Vec3f> framebuffer(width * height);
 
-    // Camera setup
+    // Build an orthonormal camera basis from the config before shooting primary rays.
     Vec3f eye = scene.config.camera.position;
     Vec3f target = scene.config.camera.lookAt;
     float fov = scene.config.camera.fov;
 
     Vec3f forward = (target - eye).normalized();
     Vec3f upHint = scene.config.camera.up.length2() > 1e-8f ? scene.config.camera.up.normalized() : Vec3f(0, 1, 0);
-    Vec3f right = scene.config.camera.right.length2() > 1e-8f
-        ? scene.config.camera.right.normalized()
-        : cross(forward, upHint).normalized();
+    Vec3f right = cross(forward, upHint).normalized();
     if (right.length2() < 1e-8f) {
         right = cross(forward, Vec3f(0, 0, 1)).normalized();
     }

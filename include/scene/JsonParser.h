@@ -3,7 +3,7 @@
 #include "scene/SceneConfig.h"
 #include <string>
 
-// Minimal JSON parser for the path tracer config.
+// Lightweight config parser for the path tracer configuration files.
 class JsonParser {
 public:
     static SceneConfig parse(const std::string& filename);
@@ -34,6 +34,7 @@ private:
     static void parseLighting(Lexer& lex, SceneConfig& cfg);
     static void parseWater(Lexer& lex, SceneConfig& cfg);
     static void parseSky(Lexer& lex, SceneConfig& cfg);
+    static void parseArtTricks(Lexer& lex, SceneConfig& cfg);
 
     static float expectNumber(Lexer& lex);
     static bool expectBool(Lexer& lex);

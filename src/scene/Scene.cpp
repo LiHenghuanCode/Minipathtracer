@@ -1,26 +1,10 @@
 #include "scene/Scene.h"
+#include "core/ArtTricks.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
 
 namespace {
-struct ShadingConstants {
-    const Vec3f glossyAmbientTint = Vec3f(0.018f, 0.016f, 0.014f);
-    const Vec3f diffuseAmbientTint = Vec3f(0.04f, 0.035f, 0.03f);
-    float upperSkyFillScale = 0.025f;
-    float glossySkyFillScale = 0.015f;
-    float diffuseSkyFillScale = 0.025f;
-    float backLightScale = 0.15f;
-    float fogColorScale = 0.35f;
-    float clearcoatF0 = 0.10f;
-    float clearcoatStrengthScale = 0.35f;
-    float clearcoatEnvReflectionScale = 1.5f;
-    float finalBaseBlend = 0.35f;
-    float finalMirrorBlend = 0.65f;
-};
-
-const ShadingConstants kShading;
-
 Vec3f sanitizeRadiance(const Vec3f& v) {
     if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) {
         return Vec3f(0.0f);
@@ -72,10 +56,10 @@ Vec3f applyMaterialNormalMap(const Material& mat, const Intersection& isect, con
         n
     );
 
-    const float requestedStrength = mat.normalStrength >= 0.0f ? mat.normalStrength : 1.0f;
-    const float normalStrength = std::clamp(requestedStrength, 0.0f, 1.0f);
+    const float normalStrength = 1.0f;
     return safeNormalizeScene(n * (1.0f - normalStrength) + mappedNormal * normalStrength, n);
 }
+
 }
 
 Vec3f Scene::computeWaterNormal(const Vec3f& hitPoint, const Vec3f& geometricNormal) const {
@@ -193,12 +177,12 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
 
     const Material& mat = materials[isect.materialId];
 
-    // Emissive surface
+    // Stop the path immediately when it hits an emitting surface.
     if (mat.hasEmission()) {
         return mat.emission;
     }
 
-    // Russian Roulette (after depth 3)
+    // Probabilistically terminate deep paths to cap recursion cost while keeping the estimator unbiased.
     float survivalProb = 1.0f;
     if (depth > 3) {
         survivalProb = std::min(0.95f, mat.color.max_component());
@@ -210,28 +194,28 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
     Vec3f hitPoint = isect.position;
     Vec3f N = isect.normal;
 
-    if (mat.type == MaterialType::DIELECTRIC && ocean) {
+    if (mat.useOceanNormals && ocean) {
         N = computeWaterNormal(hitPoint, N);
     } else {
         N = applyMaterialNormalMap(mat, isect, N);
     }
 
-    // Ensure normal faces the ray
-    if (dot(N, ray.direction) > 0 && mat.type != MaterialType::DIELECTRIC) {
+    // Flip non-mirror shading normals so cosine terms stay in the visible hemisphere.
+    if (dot(N, ray.direction) > 0 && mat.type != MaterialType::MIRROR) {
         N = -N;
     }
 
     const bool skyEnabled = config.sky.enabled;
 
-    // Direct lighting (NEE)
+    // Estimate one-bounce direct light from the area light with next-event estimation.
     Vec3f directLight(0);
-    if (mat.type == MaterialType::DIFFUSE || mat.type == MaterialType::METAL) {
+    if (mat.type == MaterialType::DIFFUSE || mat.type == MaterialType::BLEND) {
         if (hasAreaLight) {
             directLight = sampleAreaLight(hitPoint, ray.direction, N, mat, isect.texU, isect.texV);
         }
     }
 
-    if (mat.type == MaterialType::DIELECTRIC) {
+    if (mat.type == MaterialType::MIRROR) {
         Vec3f R = reflect(ray.direction.normalized(), N).normalized();
         Vec3f reflectionOrigin = hitPoint + N * 1e-3f;
         Vec3f mirrorReflection = sky.evaluate(R);
@@ -242,17 +226,10 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
         Vec3f waterReflection = mirrorReflection * std::max(0.0f, config.water.reflectionStrength);
         Vec3f result = directLight + waterReflection;
 
-        {
-            float fogDensity = std::max(0.0f, config.water.fogDensity);
-            float fogAmount = 1.0f - std::exp(-isect.t * fogDensity);
-            Vec3f fogColor = skyEnabled ? config.sky.horizonColor * kShading.fogColorScale : Vec3f(0.0f);
-            result = result * (1.0f - fogAmount) + fogColor * fogAmount;
-        }
-
-        return sanitizeRadiance(result / survivalProb);
+        return sanitizeRadiance(ArtTricks::applyDistanceFog(result, isect.t, config, skyEnabled) / survivalProb);
     }
 
-    // Indirect lighting
+    // Sample the BSDF and continue tracing the indirect bounce.
     Vec3f wo = mat.sample(ray.direction, N);
     if (wo.length2() < 1e-8f) {
         Vec3f r = directLight / survivalProb;
@@ -267,98 +244,62 @@ Vec3f Scene::castRay(const Ray& ray, int depth) const {
 
     Vec3f brdf = mat.eval(ray.direction, wo, N, isect.texU, isect.texV);
 
-    // Offset origin to avoid self-intersection
+    // Offset the bounce origin away from the surface to avoid acne from self-intersection.
     Vec3f offset = dot(wo, N) > 0 ? N * 1e-3f : -N * 1e-3f;
     Ray bounceRay(hitPoint + offset, wo);
     Intersection bounceIsect = bvh.intersect(bounceRay);
     Vec3f indirect = castRay(bounceRay, depth + 1);
-    if (hasAreaLight && mat.type == MaterialType::DIFFUSE && bounceIsect.hit) {
+    if (hasAreaLight && (mat.type == MaterialType::DIFFUSE || mat.type == MaterialType::BLEND) && bounceIsect.hit) {
         if (bounceIsect.materialId == areaLight.materialId) {
             indirect = Vec3f(0);
         }
     }
 
     Vec3f result;
-    if (mat.type == MaterialType::DIFFUSE) {
-        bool isGlossyDiffuse = mat.glossyWeight > 0.0f;
+    if (mat.type == MaterialType::DIFFUSE || mat.type == MaterialType::BLEND) {
+        const bool isBlendMaterial = mat.type == MaterialType::BLEND;
         Vec3f baseColor = mat.getColor(isect.texU, isect.texV);
-        Vec3f ambient = isGlossyDiffuse
-            ? baseColor * kShading.glossyAmbientTint
-            : baseColor * kShading.diffuseAmbientTint;
-        ambient *= std::max(0.0f, config.water.ambientStrength);
-        float envDiffuse = std::max(0.0f, config.water.environmentDiffuseStrength);
-        float upperSkyFacing = std::max(N.y, 0.0f);
-        Vec3f upperSkyFill(0.0f);
-        Vec3f skyAmbient(0.0f);
-        Vec3f shadowLift(0.0f);
-        float backLight = 0.0f;
-        if (skyEnabled) {
-            upperSkyFill = baseColor * config.water.upperSkyFillColor
-                * (upperSkyFacing * std::max(0.0f, config.water.skyFillStrength) * kShading.upperSkyFillScale * envDiffuse);
-        }
-        float skyFactor = std::max(N.y, 0.0f) * (isGlossyDiffuse ? kShading.glossySkyFillScale : kShading.diffuseSkyFillScale)
-            * std::max(0.0f, config.water.skyFillStrength);
-        if (skyEnabled) {
-            skyAmbient = baseColor * config.sky.horizonColor
-                * (skyFactor * std::max(0.0f, config.water.horizonFillStrength) * envDiffuse);
-        }
-        Vec3f bounceDir = config.water.bounceDirection.normalized();
-        if (bounceDir.length2() < 1e-8f) bounceDir = Vec3f(0.0f, -1.0f, 0.0f);
-        float bounceFacing = std::max(0.0f, dot(N, bounceDir));
-        float waterBounce = std::pow(bounceFacing, std::max(0.1f, config.water.bounceFalloff))
-            * std::max(0.0f, config.water.bounceStrength);
-        waterBounce = std::min(waterBounce, std::max(0.0f, config.water.bounceMaxContribution));
-        Vec3f bounceAmbient = baseColor * config.water.bounceColor * waterBounce;
-
-        if (skyEnabled) {
-            Vec3f sunDir = config.sky.sunDirection.normalized();
-            backLight = std::max(-dot(N, sunDir), 0.0f) * kShading.backLightScale;
-            shadowLift = baseColor * config.sky.horizonColor
-                * (std::max(0.0f, config.water.shadowLift) * (directLight.max_component() <= 0.0f ? 1.0f : 0.0f));
-        }
         float cosTheta = std::max(0.0f, dot(wo, N));
-
-        // directLight already contains BRDF * surfaceCos * geometryTerm — do not reweight by nDotL
-        Vec3f glossy(0.0f);
-        if (cosTheta > 1e-6f)
-            glossy = brdf * indirect * cosTheta / pdf_val;
-
-        result = ambient + upperSkyFill + skyAmbient + bounceAmbient + shadowLift + baseColor * backLight + directLight + glossy;
-
-        // Clearcoat environment reflection for glossy paint. This adds a thin
-        // Fresnel layer over the path-traced diffuse/glossy BRDF above instead
-        // of replacing it with a local Blinn-Phong style highlight.
-        if (isGlossyDiffuse) {
-            Vec3f V = (-ray.direction).normalized();
-            Vec3f R = reflect(ray.direction.normalized(), N).normalized();
-
-            float NoV = std::max(0.0f, dot(N, V));
-            float smoothness = 1.0f - std::clamp(mat.roughness, 0.0f, 1.0f);
-            float fresnel = kShading.clearcoatF0
-                + (1.0f - kShading.clearcoatF0) * std::pow(1.0f - NoV, 5.0f) * smoothness;
-
-            float clearcoatStrength = mat.glossyWeight * smoothness * mat.specularBoost
-                * kShading.clearcoatStrengthScale;
-
-            Vec3f envReflection = sky.evaluate(R) * kShading.clearcoatEnvReflectionScale;
-            result += envReflection * fresnel * clearcoatStrength;
-
-            Vec3f mirrorStyledReflection = sky.evaluate(R) * baseColor;
-            result = result * kShading.finalBaseBlend + mirrorStyledReflection * kShading.finalMirrorBlend;
+        Vec3f diffuseIndirect(0.0f);
+        if (cosTheta > 1e-6f) {
+            diffuseIndirect = brdf * indirect * cosTheta / pdf_val;
         }
-    } else if (mat.type == MaterialType::METAL) {
-        result = directLight + brdf * indirect;
+
+        if (isBlendMaterial) {
+            Vec3f reflection = reflect(ray.direction.normalized(), N).normalized();
+            Vec3f reflectionOrigin = hitPoint + N * 1e-3f;
+            Vec3f mirrorBounce = sky.evaluate(reflection);
+            if (depth + 1 < config.render.maxDepth) {
+                mirrorBounce = castRay(Ray(reflectionOrigin, reflection), depth + 1);
+            }
+            const float blendWeight = std::clamp(mat.blendWeight, 0.0f, 1.0f);
+            diffuseIndirect *= (1.0f - blendWeight);
+            diffuseIndirect += mirrorBounce * mat.getMirrorColor() * blendWeight;
+        }
+
+        DiffuseArtTricksContribution tricks = ArtTricks::computeDiffuseContribution(
+            N,
+            baseColor,
+            directLight,
+            isBlendMaterial,
+            config,
+            skyEnabled
+        );
+
+        result = tricks.ambient
+            + tricks.upperSkyFill
+            + tricks.horizonFill
+            + tricks.bounceFill
+            + tricks.shadowLift
+            + tricks.backLight
+            + directLight
+            + diffuseIndirect;
+
+        if (isBlendMaterial) {
+            result = ArtTricks::applyBlendFinish(result, ray.direction, N, baseColor, mat, config, sky);
+        }
     }
 
-    // Distance fog — blends distant objects toward the warm horizon color
-    // for atmospheric haze / golden hour feel.
-    {
-        float fogDensity = std::max(0.0f, config.water.fogDensity);
-        float fogAmount = 1.0f - std::exp(-isect.t * fogDensity);
-        Vec3f fogColor = skyEnabled ? config.sky.horizonColor * kShading.fogColorScale : Vec3f(0.0f);
-        result = result * (1.0f - fogAmount) + fogColor * fogAmount;
-    }
-
-    Vec3f r = sanitizeRadiance(result / survivalProb);
-    return r;
+    // Apply distance fog as a final atmospheric blend toward the configured sky colors.
+    return sanitizeRadiance(ArtTricks::applyDistanceFog(result, isect.t, config, skyEnabled) / survivalProb);
 }

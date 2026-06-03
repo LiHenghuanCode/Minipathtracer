@@ -1,9 +1,9 @@
 {
     "render": {
-        "width": 960,
-        "height": 540,
-        "samples": 64,
-        "maxDepth": 4,
+        "width": 2560,
+        "height": 1440,
+        "samples": 256,
+        "maxDepth": 8,
         "output": "output.ppm"
     },
     "camera": {
@@ -23,9 +23,9 @@
             "type": "plane",
             "position": [0, -0.1, 0],
             "scale": 50.0,
-            "material": "glass",
-            "color": [0.05, 0.12, 0.2],
-            "ior": 1.33
+            "material": "mirror",
+            "normalSource": "ocean",
+            "color": [0.05, 0.12, 0.2]
         },
         {
             "type": "plane",

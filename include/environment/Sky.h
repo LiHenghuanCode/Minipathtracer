@@ -32,10 +32,13 @@ struct SkyConfig {
 
 class Sky {
 public:
+    // Stores the current sky model parameters used by environment lookups.
     void setConfig(const SkyConfig& config);
+    // Evaluates the environment radiance seen along a world-space direction.
     Vec3f evaluate(const Vec3f& direction) const;
 
 private:
+    // Evaluates the explicit sun disk that is added on top of the base sky scattering.
     Vec3f sunDiskColor(const Vec3f& direction) const;
 
     SkyConfig config_;

@@ -19,11 +19,11 @@ bool Texture::load(const std::string& path) {
 }
 
 Vec3f Texture::sample(float u, float v) const {
-    if (!data) return Vec3f(1, 0, 1); // magenta = missing texture
+    if (!data) return Vec3f(1, 0, 1); // Return a visible fallback color for missing texture data.
 
-    // Wrap UV
+    // Wrap UVs so tiled textures repeat outside the base [0, 1] range.
     u = u - std::floor(u);
-    v = 1.0f - (v - std::floor(v)); // flip V (OBJ convention)
+    v = 1.0f - (v - std::floor(v)); // Flip V to match OBJ texture coordinates.
 
     float fx = u * (width - 1);
     float fy = v * (height - 1);
@@ -41,7 +41,7 @@ Vec3f Texture::sample(float u, float v) const {
         return Vec3f(data[idx] / 255.0f, data[idx + 1] / 255.0f, data[idx + 2] / 255.0f);
     };
 
-    // Bilinear interpolation
+    // Blend the four neighboring texels to avoid nearest-neighbor aliasing.
     Vec3f c00 = getPixel(x0, y0);
     Vec3f c10 = getPixel(x1, y0);
     Vec3f c01 = getPixel(x0, y1);

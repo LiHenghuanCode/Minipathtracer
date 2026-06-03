@@ -57,7 +57,7 @@ private:
 
     std::vector<Triangle> triangles;
     std::vector<Material> materials;
-    std::map<std::string, int> materialMap; // name -> index
+    std::map<std::string, int> materialMap; // Maps material names to indices in the local material array.
     std::vector<std::unique_ptr<Texture>> textures;
     std::unique_ptr<Ocean> ocean;
     std::unique_ptr<Ocean> oceanRipple;

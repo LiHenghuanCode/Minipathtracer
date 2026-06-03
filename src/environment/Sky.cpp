@@ -72,11 +72,13 @@ Vec3f Sky::evaluate(const Vec3f& direction) const {
     float sunDot = std::max(0.0f, dot(dir, sunDir));
     float cosTheta = dot(dir, sunDir);
 
+    // Approximate atmospheric depth along the view and sun directions.
     const float viewMu = std::max(dir.y, 0.03f);
     const float sunMu = std::max(sunDir.y + 0.08f, 0.03f);
     const float viewDepth = 1.0f / viewMu;
     const float sunDepth = 1.0f / sunMu;
 
+    // Use scaled Rayleigh and Mie coefficients to build a compact analytic sky model.
     const Vec3f betaRayleighBase(5.8e-6f, 13.5e-6f, 33.1e-6f);
     const Vec3f betaMieBase(21.0e-6f);
     const Vec3f betaRayleigh = betaRayleighBase * 2200.0f;
@@ -104,6 +106,7 @@ Vec3f Sky::evaluate(const Vec3f& direction) const {
     Vec3f skyRGB = inscatter * (16.0f * std::max(0.0f, config_.skyIntensity));
 
     if (dir.y < 0.0f) {
+        // Fade below-horizon rays toward a warmer extinction-based ground glow.
         float underHorizon = std::clamp(-dir.y * 6.0f, 0.0f, 1.0f);
         float warmDepth = 1.0f / std::max(0.12f + dir.y + 0.2f, 0.03f);
         Vec3f warmExtinction = expVec(Vec3f(-0.18f, -0.10f, -0.04f) * warmDepth);
@@ -112,6 +115,7 @@ Vec3f Sky::evaluate(const Vec3f& direction) const {
     }
 
     {
+        // Add a stylized sunset band near the sun direction around the horizon.
         Vec3f dirH(dir.x, 0.0f, dir.z);
         float dirHL = dirH.length();
         Vec3f sunH(sunDir.x, 0.0f, sunDir.z);
@@ -131,6 +135,7 @@ Vec3f Sky::evaluate(const Vec3f& direction) const {
     skyRGB += sunDiskColor(dir);
 
     if (config_.cloudsEnabled && dir.y > -0.05f) {
+        // Project the view direction into a simple cloud domain centered around the sun.
         float denom = std::max(dir.y + 0.3f, 0.05f);
         float sunDenom = std::max(sunDir.y + 0.3f, 0.05f);
         float projU = dir.x / denom - sunDir.x / sunDenom;
@@ -148,6 +153,7 @@ Vec3f Sky::evaluate(const Vec3f& direction) const {
             );
         }
 
+        // Shape cloud coverage from fractal noise and fade it out toward the zenith.
         float cloudRaw = fbm2D(projU * adaptiveScale, projV * adaptiveScale);
         float cloudMask = smoothstepCloud(
             config_.cloudThreshold,
@@ -161,6 +167,7 @@ Vec3f Sky::evaluate(const Vec3f& direction) const {
         Vec3f cloudColor = config_.cloudDarkColor * skyRGB * 1.25f * (1.0f - sunInfluence)
             + config_.cloudWarmColor * (sunInfluence * 0.75f);
 
+        // Add warm edge lighting where clouds align with the sun direction.
         float rawSat = std::clamp(cloudRaw, 0.0f, 1.0f);
         float maskSat = std::clamp(cloudMask, 0.0f, 1.0f);
         float sunEdge = std::pow(rawSat, config_.cloudSunEdgePower)
@@ -168,6 +175,7 @@ Vec3f Sky::evaluate(const Vec3f& direction) const {
             * std::pow(sunDot, config_.cloudSunFocusPower);
         cloudColor += config_.sunGlowColor * (sunEdge * config_.cloudSunEdgeIntensity * 0.35f);
 
+        // Composite clouds over the base sky, then add a compact hot core near the sun.
         float alpha = cloudMask * config_.cloudOpacity;
         skyRGB = skyRGB * (1.0f - alpha) + cloudColor * alpha;
 
@@ -176,6 +184,7 @@ Vec3f Sky::evaluate(const Vec3f& direction) const {
         skyRGB += Vec3f(1.2f, 0.38f, 0.06f) * (cloudCore * std::pow(sunDot, 4.0f) * 0.16f);
     }
 
+    // Finish with a narrow warm lobe that keeps the sunset direction punchy.
     skyRGB += Vec3f(0.8f, 0.32f, 0.16f) * (std::pow(sunDot, 12.0f) * 0.08f);
     return skyRGB;
 }
@@ -190,6 +199,7 @@ Vec3f Sky::sunDiskColor(const Vec3f& direction) const {
     float cosTheta = dot(dir, sunDir);
     float radius = std::clamp(config_.sunAngularRadius, 0.0005f, 0.08f);
     float softness = std::clamp(config_.sunEdgeSoftness, 0.0001f, 0.08f);
+    // Convert angular controls into a soft-edged disk in cosine space.
     float inner = std::cos(radius);
     float outer = std::cos(radius + softness);
     float disk = smoothstep01(outer, inner, cosTheta);

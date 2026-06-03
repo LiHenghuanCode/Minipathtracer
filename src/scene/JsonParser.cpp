@@ -48,8 +48,6 @@ std::string resolveAssetPath(const std::filesystem::path& baseDir, const std::st
 }
 }
 
-// ===== Lexer =====
-
 void JsonParser::Lexer::skipWhitespace() {
     while (pos < input.size() && (input[pos] == ' ' || input[pos] == '\t' ||
            input[pos] == '\n' || input[pos] == '\r')) {
@@ -58,7 +56,7 @@ void JsonParser::Lexer::skipWhitespace() {
 }
 
 JsonParser::Token JsonParser::Lexer::readString() {
-    pos++; // skip opening "
+    pos++;
     std::string result;
     while (pos < input.size() && input[pos] != '"') {
         if (input[pos] == '\\') {
@@ -78,7 +76,7 @@ JsonParser::Token JsonParser::Lexer::readString() {
         }
         pos++;
     }
-    pos++; // skip closing "
+    pos++;
     return {Token::STRING, result};
 }
 
@@ -122,8 +120,6 @@ JsonParser::Token JsonParser::Lexer::next() {
     }
 }
 
-// ===== Parser helpers =====
-
 float JsonParser::expectNumber(Lexer& lex) {
     Token t = lex.next();
     if (t.type != Token::NUMBER) throw std::runtime_error("Expected number, got: " + t.value);
@@ -162,23 +158,18 @@ Vec3f JsonParser::parseVec3(Lexer& lex) {
 void JsonParser::skipValue(Lexer& lex) {
     Token t = lex.next();
     if (t.type == Token::LBRACE) {
-        // Skip object
         t = lex.next();
         if (t.type == Token::RBRACE) return;
         while (true) {
-            // key
             expectToken(lex, Token::COLON);
             skipValue(lex);
             t = lex.next();
             if (t.type == Token::RBRACE) return;
-            // comma, then next key
-            t = lex.next(); // key string
+            t = lex.next();
         }
     } else if (t.type == Token::LBRACKET) {
         t = lex.next();
         if (t.type == Token::RBRACKET) return;
-        // We already consumed first element's first token, need to handle
-        // For simplicity, re-parse
         int depth = 1;
         while (depth > 0) {
             t = lex.next();
@@ -186,10 +177,7 @@ void JsonParser::skipValue(Lexer& lex) {
             else if (t.type == Token::RBRACKET || t.type == Token::RBRACE) depth--;
         }
     }
-    // STRING, NUMBER, TRUE, FALSE, NULL are already consumed
 }
-
-// ===== Section parsers =====
 
 void JsonParser::parseRender(Lexer& lex, SceneConfig& cfg) {
     expectToken(lex, Token::LBRACE);
@@ -203,7 +191,7 @@ void JsonParser::parseRender(Lexer& lex, SceneConfig& cfg) {
         else if (key == "maxDepth") cfg.render.maxDepth = (int)expectNumber(lex);
         else if (key == "output") cfg.render.outputFile = expectString(lex);
         else if (key == "toneMapping") cfg.render.toneMapping = expectString(lex);
-        else if (key == "displayExposure" || key == "exposure") cfg.render.displayExposure = (float)expectNumber(lex);
+        else if (key == "displayExposure") cfg.render.displayExposure = (float)expectNumber(lex);
         else if (key == "highlightCompression") cfg.render.highlightCompression = (float)expectNumber(lex);
         else if (key == "whitePoint") cfg.render.whitePoint = (float)expectNumber(lex);
         else skipValue(lex);
@@ -222,8 +210,7 @@ void JsonParser::parseCamera(Lexer& lex, SceneConfig& cfg) {
         if (key == "enabled") cfg.camera.enabled = expectBool(lex);
         else if (key == "position") cfg.camera.position = parseVec3(lex);
         else if (key == "lookAt") cfg.camera.lookAt = parseVec3(lex);
-        else if (key == "up" || key == "cameraUp") cfg.camera.up = parseVec3(lex);
-        else if (key == "right" || key == "cameraRight") cfg.camera.right = parseVec3(lex);
+        else if (key == "up") cfg.camera.up = parseVec3(lex);
         else if (key == "fov") cfg.camera.fov = expectNumber(lex);
         else skipValue(lex);
 
@@ -240,43 +227,41 @@ void JsonParser::parseObjects(Lexer& lex, SceneConfig& cfg) {
         obj.materialColor = Vec3f(-1);
         obj.scale = 1.0f;
         obj.roughness = -1.0f;
-        obj.glossyWeight = -1.0f;
-        obj.specularBoost = 1.0f;
-        obj.ior = -1.0f;
-        // t should be LBRACE — push back by parsing object starting from here
-        // Actually parseObject expects to read LBRACE itself, so we need to handle
-        if (t.type == Token::LBRACE || t.type == Token::COMMA) {
-            if (t.type == Token::COMMA) {
-                // next should be LBRACE
-            }
+        obj.blendWeight = -1.0f;
+        obj.reflectionScale = 1.0f;
+        if (t.type != Token::LBRACE) {
+            throw std::runtime_error("Expected object entry");
         }
-        // Simpler: re-structure
-        // We already consumed first token
-        if (t.type != Token::RBRACKET) {
-            // Parse object inline
-            Token inner = lex.next();
-            while (inner.type != Token::RBRACE) {
-                std::string key = inner.value;
-                expectToken(lex, Token::COLON);
-                if (key == "type") obj.type = expectString(lex);
-                else if (key == "file") obj.file = expectString(lex);
-                else if (key == "position") obj.position = parseVec3(lex);
-                else if (key == "scale") obj.scale = expectNumber(lex);
-                else if (key == "material") obj.materialType = expectString(lex);
-                else if (key == "color") obj.materialColor = parseVec3(lex);
-                else if (key == "roughness") obj.roughness = expectNumber(lex);
-                else if (key == "glossyWeight") obj.glossyWeight = expectNumber(lex);
-                else if (key == "specularBoost") obj.specularBoost = expectNumber(lex);
-                else if (key == "ior") obj.ior = expectNumber(lex);
-                else if (key == "coordinateSystem") obj.convertFromBlender = expectString(lex) == "blender";
-                else if (key == "blenderCoordinates") obj.convertFromBlender = expectBool(lex);
-                else skipValue(lex);
+        Token inner = lex.next();
+        while (inner.type != Token::RBRACE) {
+            std::string key = inner.value;
+            expectToken(lex, Token::COLON);
+            if (key == "type") obj.type = expectString(lex);
+            else if (key == "file") obj.file = expectString(lex);
+            else if (key == "position") obj.position = parseVec3(lex);
+            else if (key == "scale") obj.scale = expectNumber(lex);
+            else if (key == "material") obj.materialType = expectString(lex);
+            else if (key == "normalSource") obj.normalSource = expectString(lex);
+            else if (key == "color") obj.materialColor = parseVec3(lex);
+            else if (key == "roughness") obj.roughness = expectNumber(lex);
+            else if (key == "blendWeight") obj.blendWeight = expectNumber(lex);
+            else if (key == "reflectionScale") obj.reflectionScale = expectNumber(lex);
+            else if (key == "coordinateSystem") {
+                const std::string value = expectString(lex);
+                if (value == "renderer") {
+                    obj.convertFromBlender = false;
+                } else if (value == "blender") {
+                    obj.convertFromBlender = true;
+                } else {
+                    throw std::runtime_error("Unsupported coordinateSystem: " + value);
+                }
+            }
+            else skipValue(lex);
 
-                inner = lex.next();
-                if (inner.type == Token::COMMA) inner = lex.next();
-            }
-            cfg.objects.push_back(obj);
+            inner = lex.next();
+            if (inner.type == Token::COMMA) inner = lex.next();
         }
+        cfg.objects.push_back(obj);
         t = lex.next();
         if (t.type == Token::COMMA) t = lex.next();
     }
@@ -319,23 +304,12 @@ void JsonParser::parseWater(Lexer& lex, SceneConfig& cfg) {
     while (t.type != Token::RBRACE) {
         std::string key = t.value;
         expectToken(lex, Token::COLON);
-        if (key == "fftEnabled" || key == "waterFftEnabled") cfg.water.fftEnabled = expectBool(lex);
+        if (key == "fftEnabled") cfg.water.fftEnabled = expectBool(lex);
         else if (key == "fogDensity") cfg.water.fogDensity = (float)expectNumber(lex);
-        else if (key == "reflectionStrength" || key == "waterReflectionStrength") cfg.water.reflectionStrength = (float)expectNumber(lex);
-        else if (key == "normalStrength" || key == "waterNormalStrength") cfg.water.normalStrength = (float)expectNumber(lex);
-        else if (key == "skyFillStrength") cfg.water.skyFillStrength = (float)expectNumber(lex);
-        else if (key == "horizonFillStrength") cfg.water.horizonFillStrength = (float)expectNumber(lex);
-        else if (key == "bounceStrength" || key == "waterBounceStrength") cfg.water.bounceStrength = (float)expectNumber(lex);
-        else if (key == "bounceColor" || key == "waterBounceColor") cfg.water.bounceColor = parseVec3(lex);
-        else if (key == "bounceDirection" || key == "waterBounceDirection") cfg.water.bounceDirection = parseVec3(lex);
-        else if (key == "bounceFalloff" || key == "waterBounceFalloff") cfg.water.bounceFalloff = (float)expectNumber(lex);
-        else if (key == "bounceMaxContribution" || key == "waterBounceMaxContribution") cfg.water.bounceMaxContribution = (float)expectNumber(lex);
-        else if (key == "upperSkyFillColor") cfg.water.upperSkyFillColor = parseVec3(lex);
-        else if (key == "environmentDiffuseStrength") cfg.water.environmentDiffuseStrength = (float)expectNumber(lex);
-        else if (key == "ambientStrength") cfg.water.ambientStrength = (float)expectNumber(lex);
-        else if (key == "shadowLift") cfg.water.shadowLift = (float)expectNumber(lex);
-        else if (key == "largeWaveScale" || key == "waterLargeWaveScale") cfg.water.largeWaveScale = (float)expectNumber(lex);
-        else if (key == "smallWaveScale" || key == "waterSmallWaveScale") cfg.water.smallWaveScale = (float)expectNumber(lex);
+        else if (key == "reflectionStrength") cfg.water.reflectionStrength = (float)expectNumber(lex);
+        else if (key == "normalStrength") cfg.water.normalStrength = (float)expectNumber(lex);
+        else if (key == "largeWaveScale") cfg.water.largeWaveScale = (float)expectNumber(lex);
+        else if (key == "smallWaveScale") cfg.water.smallWaveScale = (float)expectNumber(lex);
         else if (key == "swell") {
             expectToken(lex, Token::LBRACE);
             Token inner = lex.next();
@@ -415,13 +389,73 @@ void JsonParser::parseSky(Lexer& lex, SceneConfig& cfg) {
     }
 }
 
-// ===== Main parse =====
+void JsonParser::parseArtTricks(Lexer& lex, SceneConfig& cfg) {
+    expectToken(lex, Token::LBRACE);
+    Token t = lex.next();
+    while (t.type != Token::RBRACE) {
+        std::string key = t.value;
+        expectToken(lex, Token::COLON);
+        if (key == "enabled") {
+            cfg.artTricks.enabled = expectBool(lex);
+        } else if (key == "ambientStrength") {
+            cfg.artTricks.ambientStrength = expectNumber(lex);
+        } else if (key == "environmentDiffuseStrength") {
+            cfg.artTricks.environmentDiffuseStrength = expectNumber(lex);
+        } else if (key == "upperSkyFillStrength") {
+            cfg.artTricks.upperSkyFillStrength = expectNumber(lex);
+        } else if (key == "upperSkyFillColor") {
+            cfg.artTricks.upperSkyFillColor = parseVec3(lex);
+        } else if (key == "horizonFillStrength") {
+            cfg.artTricks.horizonFillStrength = expectNumber(lex);
+        } else if (key == "bounceStrength") {
+            cfg.artTricks.bounceStrength = expectNumber(lex);
+        } else if (key == "bounceColor") {
+            cfg.artTricks.bounceColor = parseVec3(lex);
+        } else if (key == "bounceDirection") {
+            cfg.artTricks.bounceDirection = parseVec3(lex);
+        } else if (key == "bounceFalloff") {
+            cfg.artTricks.bounceFalloff = expectNumber(lex);
+        } else if (key == "bounceMaxContribution") {
+            cfg.artTricks.bounceMaxContribution = expectNumber(lex);
+        } else if (key == "shadowLift") {
+            cfg.artTricks.shadowLift = expectNumber(lex);
+        } else if (key == "backLightScale") {
+            cfg.artTricks.backLightScale = expectNumber(lex);
+        } else if (key == "fogColorScale") {
+            cfg.artTricks.fogColorScale = expectNumber(lex);
+        } else if (key == "mirrorBlendEnabled") {
+            cfg.artTricks.mirrorBlendEnabled = expectBool(lex);
+        } else if (key == "mirrorBlendWeight") {
+            cfg.artTricks.mirrorBlendWeight = expectNumber(lex);
+        } else if (key == "clearcoatEnvReflectionScale") {
+            cfg.artTricks.clearcoatEnvReflectionScale = expectNumber(lex);
+        } else if (key == "blendAmbientTint") {
+            cfg.artTricks.blendAmbientTint = parseVec3(lex);
+        } else if (key == "diffuseAmbientTint") {
+            cfg.artTricks.diffuseAmbientTint = parseVec3(lex);
+        } else if (key == "upperSkyFillScale") {
+            cfg.artTricks.upperSkyFillScale = expectNumber(lex);
+        } else if (key == "blendSkyFillScale") {
+            cfg.artTricks.blendSkyFillScale = expectNumber(lex);
+        } else if (key == "diffuseSkyFillScale") {
+            cfg.artTricks.diffuseSkyFillScale = expectNumber(lex);
+        } else if (key == "clearcoatF0") {
+            cfg.artTricks.clearcoatF0 = expectNumber(lex);
+        } else if (key == "clearcoatStrengthScale") {
+            cfg.artTricks.clearcoatStrengthScale = expectNumber(lex);
+        } else {
+            skipValue(lex);
+        }
+
+        t = lex.next();
+        if (t.type == Token::COMMA) t = lex.next();
+    }
+}
 
 SceneConfig JsonParser::parse(const std::string& filename) {
     SceneConfig cfg{};
 
-    // Load finalized parameters first so scene.json can selectively override them.
-    // Look for locked_settings.json beside the scene file; skip silently if absent.
+    // Load shared locked settings first, then let the main scene file override them.
     std::filesystem::path scenePath = resolveInputPath(filename);
     std::filesystem::path lockedPath = scenePath.parent_path() / "locked_settings.json";
     if (std::filesystem::exists(lockedPath)) {
@@ -446,7 +480,7 @@ void JsonParser::parseInto(const std::string& filename, SceneConfig& cfg) {
 
     Lexer lex(content);
 
-    expectToken(lex, Token::LBRACE); // root {
+    expectToken(lex, Token::LBRACE);
 
     Token t = lex.next();
     while (t.type != Token::RBRACE && t.type != Token::END) {
@@ -459,6 +493,7 @@ void JsonParser::parseInto(const std::string& filename, SceneConfig& cfg) {
         else if (key == "lighting") parseLighting(lex, cfg);
         else if (key == "water") parseWater(lex, cfg);
         else if (key == "sky") parseSky(lex, cfg);
+        else if (key == "artTricks") parseArtTricks(lex, cfg);
         else skipValue(lex);
 
         t = lex.next();

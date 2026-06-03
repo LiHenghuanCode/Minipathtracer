@@ -51,7 +51,7 @@ struct BVHNode {
     AABB bounds;
     BVHNode* left = nullptr;
     BVHNode* right = nullptr;
-    int startIdx = 0, endIdx = 0; // triangle range for leaf
+    int startIdx = 0, endIdx = 0; // Inclusive triangle span owned by a leaf node.
 
     bool isLeaf() const { return left == nullptr && right == nullptr; }
 };

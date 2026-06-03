@@ -1,47 +1,39 @@
 #pragma once
 #include "core/Vec3.h"
-#include "core/Random.h"
 #include "scene/Texture.h"
 #include <string>
 
 enum class MaterialType {
     DIFFUSE,
-    METAL,
-    DIELECTRIC,
-    EMISSIVE
+    EMISSIVE,
+    MIRROR,
+    BLEND
 };
 
 struct Material {
     std::string name;
     MaterialType type = MaterialType::DIFFUSE;
-    Vec3f color = Vec3f(0.8f);      // base color / albedo
-    Vec3f emission = Vec3f(0);       // emissive color
-    Vec3f specularColor = Vec3f(0.04f);
-    float specularBoost = 1.0f;
-    float glossyWeight = 0.0f;
-    float roughness = 1.0f;          // 0 = mirror, 1 = rough
-    float ior = 1.5f;                // index of refraction
-    float alpha = 1.0f;
-    Vec3f aluminumReflectance = Vec3f(0.91f, 0.92f, 0.92f);
-    float normalStrength = -1.0f;    // < 0 uses full tangent-space normal map strength
-    Texture* texture = nullptr;      // diffuse texture (not owned)
-    Texture* bumpTexture = nullptr;  // tangent-space bump/normal texture (not owned)
+    Vec3f color = Vec3f(0.8f);       // Base albedo used by diffuse shading and texture modulation.
+    Vec3f emission = Vec3f(0);       // Self-emitted radiance for light-emitting surfaces.
+    Vec3f mirrorColor = Vec3f(1.0f); // Tint applied to mirror-like reflections.
+    float reflectionScale = 1.0f;
+    float blendWeight = 0.0f;        // Reflection share in the simplified diffuse-plus-mirror blend.
+    float roughness = 1.0f;
+    bool useOceanNormals = false;
+    Texture* texture = nullptr;
+    Texture* bumpTexture = nullptr;
 
     bool hasEmission() const;
     Vec3f getColor(float u, float v) const;
+    Vec3f getMirrorColor() const;
     Vec3f sample(const Vec3f& wi, const Vec3f& normal) const;
     float pdf(const Vec3f& wi, const Vec3f& wo, const Vec3f& normal) const;
     Vec3f eval(const Vec3f& wi, const Vec3f& wo, const Vec3f& normal,
                float texU = 0.0f, float texV = 0.0f) const;
 
 private:
-    float clampedRoughness() const;
-    float clampedGlossyWeight() const;
-    float clampedSpecularBoost() const;
-    float glossyExponent() const;
+    float clampedReflectionScale() const;
     float diffusePdf(const Vec3f& wo, const Vec3f& normal) const;
-    float glossyPdf(const Vec3f& wi, const Vec3f& wo, const Vec3f& normal) const;
     Vec3f sampleDiffuse(const Vec3f& wi, const Vec3f& normal) const;
-    Vec3f sampleMetal(const Vec3f& wi, const Vec3f& normal) const;
-    Vec3f sampleDielectric(const Vec3f& wi, const Vec3f& normal) const;
+    Vec3f sampleMirror(const Vec3f& wi, const Vec3f& normal) const;
 };

@@ -26,22 +26,22 @@ BVHNode* BVH::buildRecursive(std::vector<Triangle>& tris, int start, int end) {
     node->startIdx = start;
     node->endIdx = end;
 
-    // Compute bounds
+    // Compute the node bounds over the current triangle span.
     for (int i = start; i < end; ++i) {
         node->bounds.expand(tris[i]);
     }
 
     int count = end - start;
     if (count <= 4) {
-        // Leaf node
+        // Small spans stay as leaves to avoid over-partitioning.
         return node;
     }
 
-    // Split on longest axis at midpoint
+    // Split along the longest axis using the centroid midpoint.
     int axis = node->bounds.longestAxis();
     float mid = node->bounds.centroid()[axis];
 
-    // Partition triangles
+    // Partition primitives by centroid so each child gets a contiguous span.
     auto it = std::partition(tris.begin() + start, tris.begin() + end,
         [axis, mid](const Triangle& tri) {
             return tri.centroid()[axis] < mid;
@@ -49,7 +49,7 @@ BVHNode* BVH::buildRecursive(std::vector<Triangle>& tris, int start, int end) {
 
     int splitIdx = (int)(it - tris.begin());
 
-    // If partition failed, split in half
+    // Fall back to a median split if all centroids land on the same side.
     if (splitIdx == start || splitIdx == end) {
         splitIdx = start + count / 2;
         std::nth_element(tris.begin() + start, tris.begin() + splitIdx, tris.begin() + end,

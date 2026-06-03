@@ -9,7 +9,7 @@ public:
     ~Texture();
 
     bool load(const std::string& path);
-    Vec3f sample(float u, float v) const;  // bilinear interpolation
+    Vec3f sample(float u, float v) const;  // Samples the texture with wrapped UVs and bilinear filtering.
     bool isLoaded() const { return data != nullptr; }
 
 private:

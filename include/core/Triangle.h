@@ -2,20 +2,16 @@
 #include "core/Vec3.h"
 
 struct Triangle {
-    Vec3f v0, v1, v2;       // positions
-    Vec3f n0, n1, n2;       // normals
+    Vec3f v0, v1, v2;       // Vertex positions in world space.
+    Vec3f n0, n1, n2;       // Per-vertex shading normals.
     Vec3f tangent, bitangent;
-    float u0, v0t, u1, v1t, u2, v2t; // tex coords
+    float u0, v0t, u1, v1t, u2, v2t; // Per-vertex UV coordinates.
     bool hasTangent = false;
     int materialId;
 
     Triangle() : u0(0), v0t(0), u1(0), v1t(0), u2(0), v2t(0), materialId(-1) {}
 
     Vec3f centroid() const { return (v0 + v1 + v2) / 3.0f; }
-
-    Vec3f faceNormal() const {
-        return cross(v1 - v0, v2 - v0).normalized();
-    }
 };
 
 struct Intersection {
@@ -24,12 +20,12 @@ struct Intersection {
     Vec3f position;
     Vec3f normal;
     Vec3f tangent, bitangent;
-    float u = 0, v = 0;  // barycentric
-    float texU = 0, texV = 0; // texture coords
+    float u = 0, v = 0;  // Barycentric coordinates for the hit point.
+    float texU = 0, texV = 0; // Interpolated UV coordinates at the hit point.
     bool hasTangent = false;
     int materialId = -1;
 
-    // Interpolate from triangle
+    // Copies interpolated shading data from the source triangle into the hit record.
     void interpolate(const Triangle& tri, float uu, float vv) {
         float w = 1.0f - uu - vv;
         normal = (tri.n0 * w + tri.n1 * uu + tri.n2 * vv).normalized();
@@ -44,7 +40,7 @@ struct Intersection {
     }
 };
 
-// Moller-Trumbore ray-triangle intersection
+// Standard Moller-Trumbore ray-triangle intersection test.
 inline bool rayTriangleIntersect(const Ray& ray, const Triangle& tri,
                                   float& t, float& u, float& v) {
     Vec3f edge1 = tri.v1 - tri.v0;

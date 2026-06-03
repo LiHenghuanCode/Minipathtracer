@@ -33,7 +33,7 @@ void Ocean::generate() {
     evaluateWavesAtTime(time);
     fft2D(hTilde, true);
 
-    // Extract height field with frequency shift
+    // Shift the FFT result back into a spatial height field.
     for (int m = 0; m < N; ++m) {
         for (int n = 0; n < N; ++n) {
             float sign = ((m + n) % 2 == 0) ? 1.0f : -1.0f;
@@ -41,8 +41,7 @@ void Ocean::generate() {
         }
     }
 
-    // Normalize height field to desired wave height range
-    // This ensures visible waves regardless of amplitude parameter tuning
+    // Normalize the generated height field so the configured amplitude maps to a visible wave range.
     float minH = heightMap[0], maxH = heightMap[0];
     for (int i = 1; i < N * N; ++i) {
         minH = std::min(minH, heightMap[i]);
@@ -50,8 +49,7 @@ void Ocean::generate() {
     }
     float range = maxH - minH;
     if (range > 1e-10f) {
-        // Scale to desired wave height (amplitude parameter now controls wave height in meters)
-        float desiredHeight = amplitude; // reinterpret amplitude as wave height
+        float desiredHeight = amplitude; // Treat amplitude as the target wave-height range in world units.
         float scale = desiredHeight / range;
         for (int i = 0; i < N * N; ++i) {
             heightMap[i] *= scale;
@@ -102,11 +100,10 @@ float Ocean::phillips(float kx, float kz) const {
     float directional = std::max(0.0f, dot(kHat, windDir));
     directional = directional * directional;
 
-    // Suppress high frequency ripples
+    // Dampen extremely high frequencies so the surface does not turn into noise.
     float dampHigh = std::exp(-k2 * smallWave * smallWave);
-    // Suppress low frequency energy explosion (critical fix)
-    // Without this, 1/k^4 sends all energy to k→0, making waves invisible
-    float kMin = 2.0f * PI / L;  // minimum meaningful wavenumber for this patch
+    // Dampen the lowest frequencies to avoid the Phillips spectrum over-concentrating energy near zero.
+    float kMin = 2.0f * PI / L;  // Smallest useful wavenumber represented by this patch.
     float dampLow = 1.0f - std::exp(-k2 / (kMin * kMin * 4.0f));
 
     float spectrum = amplitude * std::exp(-1.0f / (k2 * Lphillips * Lphillips)) / (k2 * k2);

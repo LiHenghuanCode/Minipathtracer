@@ -10,6 +10,7 @@ find_package(OpenMP REQUIRED)
 
 add_executable(pathtracer
     src/main.cpp
+    src/core/ArtTricks.cpp
     src/core/Material.cpp
     src/scene/SceneLoading.cpp
     src/environment/Sky.cpp

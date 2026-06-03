@@ -54,8 +54,70 @@ float roughnessFromNs(float ns) {
     return std::clamp(roughness, 0.02f, 1.0f);
 }
 
-float glossyWeightFromKs(const Vec3f& ks) {
+float blendWeightFromKs(const Vec3f& ks) {
     return std::clamp(ks.max_component() * 0.35f, 0.0f, 0.35f);
+}
+
+bool isNamedMirrorMaterial(const std::string& name) {
+    return name == "canopy_glass";
+}
+
+bool hasStrongSpecular(const objl::Material& mtl) {
+    return std::max({mtl.Ks.X, mtl.Ks.Y, mtl.Ks.Z}) > 0.08f;
+}
+
+bool hasDiffuseTexture(const objl::Material& mtl) {
+    return !mtl.map_Kd.empty();
+}
+
+bool hasBumpTexture(const objl::Material& mtl) {
+    return !mtl.map_bump.empty();
+}
+
+MaterialType inferMaterialTypeFromMtl(const objl::Material& mtl) {
+    const float dissolve = std::clamp(mtl.d, 0.0f, 1.0f);
+    const float ior = std::max(mtl.Ni, 1.0f);
+    const float ns = std::max(mtl.Ns, 0.0f);
+    const bool transparent = dissolve < 0.999f;
+    const bool strongSpecular = hasStrongSpecular(mtl);
+    const bool texturedDiffuse = hasDiffuseTexture(mtl);
+    const bool bumped = hasBumpTexture(mtl);
+    const bool reflectiveIllum = mtl.illum >= 2;
+
+    // Strong transparency plus specular energy is treated as a mirror-like shell.
+    if (transparent && strongSpecular) {
+        return MaterialType::MIRROR;
+    }
+
+    // High-ior, texture-free highlights are also promoted to the mirror bucket.
+    if (strongSpecular && reflectiveIllum && !texturedDiffuse && !bumped && ior >= 1.3f) {
+        return MaterialType::MIRROR;
+    }
+
+    // Textured or bumped shiny surfaces keep a diffuse base with an added reflective lobe.
+    if (strongSpecular && (texturedDiffuse || bumped)) {
+        return MaterialType::BLEND;
+    }
+
+    // Opaque but polished materials fall back to the mixed model when the MTL advertises strong highlights.
+    if (strongSpecular && reflectiveIllum && ns >= 80.0f) {
+        return MaterialType::BLEND;
+    }
+
+    return MaterialType::DIFFUSE;
+}
+
+void applyNameFallbackForAmbiguousMtl(const objl::Material& mtl, Material& mat) {
+    // This asset needs a name-based fallback to preserve the reflective canopy material.
+    if (isNamedMirrorMaterial(mtl.name)) {
+        mat.type = MaterialType::MIRROR;
+        return;
+    }
+
+    // Strengthen the reflective contribution for the named metal material when the MTL stays ambiguous.
+    if (mtl.name == "metal" && mat.type == MaterialType::BLEND) {
+        mat.blendWeight = std::max(mat.blendWeight, 0.85f);
+    }
 }
 
 void computeTriangleTangents(Triangle& tri) {
@@ -76,6 +138,10 @@ void computeTriangleTangents(Triangle& tri) {
     tri.tangent = safeNormalizeScene((edge1 * dv2 - edge2 * dv1) * invDet, Vec3f(0.0f));
     tri.bitangent = safeNormalizeScene((edge2 * du1 - edge1 * du2) * invDet, Vec3f(0.0f));
     tri.hasTangent = tri.tangent.length2() > 1e-8f && tri.bitangent.length2() > 1e-8f;
+}
+
+bool usesOceanNormals(const SceneConfig::ObjectEntry& entry) {
+    return entry.normalSource == "ocean";
 }
 }
 
@@ -167,46 +233,44 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
         basePath = entry.file.substr(0, lastSlash + 1);
     }
 
-    // Load materials from MTL
+    // Build renderer materials from the OBJ loader's MTL data.
     for (auto& mtl : loader.LoadedMaterials) {
         Material mat;
         mat.name = mtl.name;
         mat.color = Vec3f(mtl.Kd.X, mtl.Kd.Y, mtl.Kd.Z);
-        mat.specularColor = Vec3f(mtl.Ks.X, mtl.Ks.Y, mtl.Ks.Z);
-        mat.glossyWeight = glossyWeightFromKs(mat.specularColor);
+        mat.mirrorColor = Vec3f(mtl.Ks.X, mtl.Ks.Y, mtl.Ks.Z);
+        mat.blendWeight = blendWeightFromKs(mat.mirrorColor);
+        mat.type = inferMaterialTypeFromMtl(mtl);
 
-        // Auto-detect material type from MTL fields
-        if (entry.materialType == "metal" ||
-            (entry.materialType.empty() && mtl.illum >= 3 && mtl.Ks.X + mtl.Ks.Y + mtl.Ks.Z > 0.5f)) {
-            mat.type = MaterialType::METAL;
-        } else if (entry.materialType == "glass" ||
-                   (entry.materialType.empty() && mtl.d < 0.9f && mtl.illum >= 4)) {
-            mat.type = MaterialType::DIELECTRIC;
-            mat.ior = mtl.Ni > 0.1f ? mtl.Ni : 1.5f;
+        // Prefer explicit scene overrides, then inferred MTL semantics, then narrow name-based fallbacks.
+        if (entry.materialType == "metal" || entry.materialType == "mirror") {
+            mat.type = MaterialType::MIRROR;
         } else if (entry.materialType == "emissive") {
             mat.type = MaterialType::EMISSIVE;
             mat.emission = mat.color * 10.0f;
         } else {
-            mat.type = MaterialType::DIFFUSE;
+            applyNameFallbackForAmbiguousMtl(mtl, mat);
         }
+        mat.useOceanNormals = usesOceanNormals(entry);
 
         if (std::isfinite(mtl.Ns) && mtl.Ns > 0.0f &&
-            (mat.type == MaterialType::DIFFUSE || mat.type == MaterialType::METAL)) {
+            (mat.type == MaterialType::DIFFUSE || mat.type == MaterialType::BLEND)) {
             mat.roughness = roughnessFromNs(mtl.Ns);
         }
 
-        // JSON overrides
+        // Apply per-object overrides from the scene config after the MTL defaults are in place.
         if (entry.materialColor.x >= 0) mat.color = entry.materialColor;
         if (entry.roughness >= 0) {
             mat.roughness = entry.roughness;
         }
-        if (entry.glossyWeight >= 0) {
-            mat.glossyWeight = std::clamp(entry.glossyWeight, 0.0f, 0.8f);
+        if (entry.blendWeight >= 0) {
+            mat.blendWeight = std::clamp(entry.blendWeight, 0.0f, 1.0f);
+            if (mat.type == MaterialType::DIFFUSE && mat.blendWeight > 0.0f) {
+                mat.type = MaterialType::BLEND;
+            }
         }
-        mat.specularBoost = std::clamp(entry.specularBoost, 0.0f, 4.0f);
-        if (entry.ior >= 0) mat.ior = entry.ior;
-
-        // Load diffuse texture
+        mat.reflectionScale = std::clamp(entry.reflectionScale, 0.0f, 4.0f);
+        // Attach the diffuse texture when the MTL provides one.
         if (!mtl.map_Kd.empty()) {
             auto tex = std::make_unique<Texture>();
             std::string texPath = resolveTexturePath(basePath, mtl.map_Kd);
@@ -220,8 +284,7 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
             }
         }
 
-        // Load tangent-space bump/normal texture. The local OBJ loader stores map_Bump,
-        // map_bump, bump, norm, and normal declarations in map_bump.
+        // Attach the tangent-space bump or normal map stored by the OBJ loader in map_bump.
         if (!mtl.map_bump.empty()) {
             auto tex = std::make_unique<Texture>();
             std::string texPath = resolveTexturePath(basePath, mtl.map_bump);
@@ -239,28 +302,33 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
         materials.push_back(mat);
     }
 
-    // If no materials loaded, add a default
+    // Fall back to a single default material when the OBJ carries no usable MTL data.
     if (materials.empty() || loader.LoadedMaterials.empty()) {
         Material defaultMat;
         defaultMat.color = Vec3f(0.8f);
 
-        if (entry.materialType == "metal") defaultMat.type = MaterialType::METAL;
-        else if (entry.materialType == "glass") defaultMat.type = MaterialType::DIELECTRIC;
-        else if (entry.materialType == "emissive") defaultMat.type = MaterialType::EMISSIVE;
+        if (entry.materialType == "metal" || entry.materialType == "mirror") {
+            defaultMat.type = MaterialType::MIRROR;
+        } else if (entry.materialType == "emissive") {
+            defaultMat.type = MaterialType::EMISSIVE;
+        }
+        defaultMat.useOceanNormals = usesOceanNormals(entry);
 
         if (entry.materialColor.x >= 0) defaultMat.color = entry.materialColor;
         if (entry.roughness >= 0) defaultMat.roughness = entry.roughness;
-        if (entry.glossyWeight >= 0) {
-            defaultMat.glossyWeight = std::clamp(entry.glossyWeight, 0.0f, 0.8f);
+        if (entry.blendWeight >= 0) {
+            defaultMat.blendWeight = std::clamp(entry.blendWeight, 0.0f, 1.0f);
+            if (defaultMat.type == MaterialType::DIFFUSE && defaultMat.blendWeight > 0.0f) {
+                defaultMat.type = MaterialType::BLEND;
+            }
         }
-        defaultMat.specularBoost = std::clamp(entry.specularBoost, 0.0f, 4.0f);
-        if (entry.ior >= 0) defaultMat.ior = entry.ior;
+        defaultMat.reflectionScale = std::clamp(entry.reflectionScale, 0.0f, 4.0f);
 
         materialMap["_default"] = (int)materials.size();
         materials.push_back(defaultMat);
     }
 
-    // Convert meshes to triangles
+    // Flatten loader meshes into the renderer's triangle list.
     for (auto& mesh : loader.LoadedMeshes) {
         int matId = 0;
         if (!mesh.MeshMaterial.name.empty()) {
@@ -276,7 +344,7 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
                 if (entry.convertFromBlender) {
                     pos = blenderToRendererPoint(pos);
                 }
-                // Apply transform: scale -> translate
+                // Apply the object-level transform after any coordinate-system conversion.
                 pos = pos * entry.scale + entry.position;
 
                 Vec3f nor(v.Normal.X, v.Normal.Y, v.Normal.Z);
@@ -303,24 +371,27 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
 }
 
 void Scene::addPlane(const SceneConfig::ObjectEntry& entry) {
-    // Create material for plane
+    // Create a synthetic material for the procedural ground or water plane.
     Material mat;
-    if (entry.materialType == "glass" || entry.materialType == "dielectric") {
-        mat.type = MaterialType::DIELECTRIC;
-        mat.ior = entry.ior >= 0 ? entry.ior : 1.33f; // water default
+    if (entry.materialType == "mirror") {
+        mat.type = MaterialType::MIRROR;
         mat.color = entry.materialColor.x >= 0 ? entry.materialColor : Vec3f(0.1f, 0.2f, 0.4f);
     } else if (entry.materialType == "metal") {
-        mat.type = MaterialType::METAL;
+        mat.type = MaterialType::MIRROR;
         mat.roughness = entry.roughness >= 0 ? entry.roughness : 0.1f;
         mat.color = entry.materialColor.x >= 0 ? entry.materialColor : Vec3f(0.8f);
     } else {
         mat.type = MaterialType::DIFFUSE;
         mat.color = entry.materialColor.x >= 0 ? entry.materialColor : Vec3f(0.5f);
     }
-    if (entry.glossyWeight >= 0) {
-        mat.glossyWeight = std::clamp(entry.glossyWeight, 0.0f, 0.8f);
+    mat.useOceanNormals = usesOceanNormals(entry);
+    if (entry.blendWeight >= 0) {
+        mat.blendWeight = std::clamp(entry.blendWeight, 0.0f, 1.0f);
+        if (mat.type == MaterialType::DIFFUSE && mat.blendWeight > 0.0f) {
+            mat.type = MaterialType::BLEND;
+        }
     }
-    mat.specularBoost = std::clamp(entry.specularBoost, 0.0f, 4.0f);
+    mat.reflectionScale = std::clamp(entry.reflectionScale, 0.0f, 4.0f);
 
     int matId = (int)materials.size();
     materials.push_back(mat);
@@ -330,7 +401,7 @@ void Scene::addPlane(const SceneConfig::ObjectEntry& entry) {
     Vec3f p = entry.position;
     Vec3f normal(0, 1, 0);
 
-    // Two triangles forming a quad
+    // Represent the plane as a two-triangle quad.
     Triangle t1;
     t1.v0 = Vec3f(p.x - size, y, p.z - size);
     t1.v1 = Vec3f(p.x + size, y, p.z - size);
