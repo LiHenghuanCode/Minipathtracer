@@ -1,6 +1,6 @@
-#include "Material.h"
+#include "core/Material.h"
 
-#include "Random.h"
+#include "core/Random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -91,13 +91,6 @@ bool Material::hasEmission() const {
 Vec3f Material::getColor(float u, float v) const {
     if (texture && texture->isLoaded()) {
         return texture->sample(u, v) * color;
-    }
-    return color;
-}
-
-Vec3f Material::getTextureColor(float u, float v) const {
-    if (texture && texture->isLoaded()) {
-        return texture->sample(u, v);
     }
     return color;
 }

@@ -1,6 +1,6 @@
 #pragma once
-#include "Vec3.h"
-#include "Triangle.h"
+#include "core/Vec3.h"
+#include "core/Triangle.h"
 #include <vector>
 #include <memory>
 
@@ -31,11 +31,6 @@ struct AABB {
         if (d.x > d.y && d.x > d.z) return 0;
         if (d.y > d.z) return 1;
         return 2;
-    }
-
-    float surfaceArea() const {
-        Vec3f d = extent();
-        return 2.0f * (d.x * d.y + d.x * d.z + d.y * d.z);
     }
 
     bool intersect(const Ray& ray, float tMin, float tMax) const {

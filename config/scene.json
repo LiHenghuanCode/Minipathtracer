@@ -4,35 +4,20 @@
         "height": 540,
         "samples": 64,
         "maxDepth": 4,
-        "output": "output.ppm",
-        "renderMode": "toneMapped"
+        "output": "output.ppm"
     },
     "camera": {
         "enabled": true,
         "position": [34, 4.2, 0.0],
         "lookAt": [24, 3.2, 0.0],
         "up": [0, 1, 0],
-        "right": [0, 0, 0],
         "fov": 38
-    },
-    "camera2": {
-        "enabled": false,
-        "position": [-4, -2, 39.789],
-        "lookAt": [-2, -1.410, 0.14],
-        "up": [0, 1, 0],
-        "right": [0, 0, 0],
-        "fov": 65,
-        "output": "output_2.ppm"
     },
     "objects": [
         {
             "type": "obj",
             "file": "assets/model/8610.obj",
-            "position": [0, -0.3, 0],
-            "scale": 1.0,
-            "glossyWeight": 0.50,
-            "specularBoost": 1.5,
-            "roughness": 0.25
+            "position": [0, -0.3, 0]
         },
         {
             "type": "plane",
@@ -46,10 +31,7 @@
             "type": "plane",
             "position": [0, -2.0, 0],
             "scale": 50.0,
-            "material": "diffuse",
-            "color": [0.4, 0.35, 0.25],
-            "glossyWeight": 0.0,
-            "specularBoost": 1.0
+            "color": [0.4, 0.35, 0.25]
         }
     ],
     "lighting": {
@@ -62,11 +44,12 @@
             "intensity": 100
         }
     },
+    "water": {
+        "fftEnabled": true
+    },
     "sky": {
         "enabled": true,
-        "topColor":     [0.04, 0.06, 0.18],
         "horizonColor": [1.20, 0.36, 0.10],
-        "bottomColor":  [0.42, 0.28, 0.10],
         "sunDirection": [-0.966, -0.017, -0.258],
         "sunDiskColor": [6.0, 3.2, 1.2],
         "sunGlowColor": [1.4, 0.45, 0.14],

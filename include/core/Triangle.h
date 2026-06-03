@@ -1,5 +1,5 @@
 #pragma once
-#include "Vec3.h"
+#include "core/Vec3.h"
 
 struct Triangle {
     Vec3f v0, v1, v2;       // positions

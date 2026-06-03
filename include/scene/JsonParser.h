@@ -1,5 +1,6 @@
 #pragma once
-#include "Scene.h"
+#include "core/Vec3.h"
+#include "scene/SceneConfig.h"
 #include <string>
 
 // Minimal JSON parser for the path tracer config.
@@ -29,9 +30,9 @@ private:
 
     static void parseRender(Lexer& lex, SceneConfig& cfg);
     static void parseCamera(Lexer& lex, SceneConfig& cfg);
-    static void parseSecondaryCamera(Lexer& lex, SceneConfig& cfg);
     static void parseObjects(Lexer& lex, SceneConfig& cfg);
     static void parseLighting(Lexer& lex, SceneConfig& cfg);
+    static void parseWater(Lexer& lex, SceneConfig& cfg);
     static void parseSky(Lexer& lex, SceneConfig& cfg);
 
     static float expectNumber(Lexer& lex);

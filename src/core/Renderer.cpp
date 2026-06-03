@@ -1,5 +1,5 @@
-#include "Renderer.h"
-#include "Random.h"
+#include "core/Renderer.h"
+#include "core/Random.h"
 #include <iostream>
 #include <fstream>
 #include <cmath>
@@ -20,12 +20,13 @@ void printVec3(const char* label, const Vec3f& v) {
 }
 
 Vec3f applyDisplayTransform(Vec3f c, const SceneConfig& config, int px, int py, int width, int height) {
-    const bool useTimeWarp = config.toneMapping == "timeWarp";
-    const bool useFilmic = config.toneMapping == "filmic";
-    const bool useRawLinear = config.renderMode == "rawLinear" || config.toneMapping == "rawLinear";
-    const float displayExposure = std::max(0.0f, config.displayExposure);
-    const float highlightCompression = std::max(0.0f, config.highlightCompression);
-    const float whitePoint = std::max(1e-4f, config.whitePoint);
+    const RenderConfig& render = config.render;
+    const bool useTimeWarp = render.toneMapping == "timeWarp";
+    const bool useFilmic = render.toneMapping == "filmic";
+    const bool useRawLinear = render.toneMapping == "rawLinear";
+    const float displayExposure = std::max(0.0f, render.displayExposure);
+    const float highlightCompression = std::max(0.0f, render.highlightCompression);
+    const float whitePoint = std::max(1e-4f, render.whitePoint);
 
     c *= displayExposure;
 
@@ -100,55 +101,29 @@ Vec3f applyDisplayTransform(Vec3f c, const SceneConfig& config, int px, int py, 
 }
 
 void Renderer::render(const Scene& scene) {
-    bool renderedAnyView = false;
-
-    if (scene.config.cameraEnabled) {
-        renderView(scene, {
-            scene.config.cameraPos,
-            scene.config.cameraLookAt,
-            scene.config.cameraRight,
-            scene.config.cameraUp,
-            scene.config.fov,
-            scene.config.outputFile
-        });
-        renderedAnyView = true;
-    }
-
-    if (scene.config.secondaryCameraEnabled) {
-        std::cout << "\n=== Secondary camera ===" << std::endl;
-        renderView(scene, {
-            scene.config.secondaryCameraPos,
-            scene.config.secondaryCameraLookAt,
-            scene.config.secondaryCameraRight,
-            scene.config.secondaryCameraUp,
-            scene.config.secondaryFov,
-            scene.config.secondaryOutputFile
-        });
-        renderedAnyView = true;
-    }
-
-    if (!renderedAnyView) {
+    if (!scene.config.camera.enabled) {
         std::cerr << "No enabled cameras; nothing rendered." << std::endl;
+        return;
     }
+
+    renderView(scene);
 }
 
-void Renderer::renderView(const Scene& scene, const CameraView& view) {
-    scene.resetMaterialRoleDiagnostics();
-
-    int width = scene.config.width;
-    int height = scene.config.height;
-    int spp = scene.config.spp;
+void Renderer::renderView(const Scene& scene) {
+    int width = scene.config.render.width;
+    int height = scene.config.render.height;
+    int spp = scene.config.render.spp;
     std::vector<Vec3f> framebuffer(width * height);
 
     // Camera setup
-    Vec3f eye = view.position;
-    Vec3f target = view.lookAt;
-    float fov = view.fov;
+    Vec3f eye = scene.config.camera.position;
+    Vec3f target = scene.config.camera.lookAt;
+    float fov = scene.config.camera.fov;
 
     Vec3f forward = (target - eye).normalized();
-    Vec3f upHint = view.up.length2() > 1e-8f ? view.up.normalized() : Vec3f(0, 1, 0);
-    Vec3f right = view.right.length2() > 1e-8f
-        ? view.right.normalized()
+    Vec3f upHint = scene.config.camera.up.length2() > 1e-8f ? scene.config.camera.up.normalized() : Vec3f(0, 1, 0);
+    Vec3f right = scene.config.camera.right.length2() > 1e-8f
+        ? scene.config.camera.right.normalized()
         : cross(forward, upHint).normalized();
     if (right.length2() < 1e-8f) {
         right = cross(forward, Vec3f(0, 0, 1)).normalized();
@@ -168,13 +143,6 @@ void Renderer::renderView(const Scene& scene, const CameraView& view) {
     printVec3("Camera forward", forward);
     printVec3("Camera up", up);
     std::cout << "Camera distance to scene center = " << cameraDistance << std::endl;
-
-    if (scene.config.debugMode) {
-        std::cout << "Rendering debug axes/bounding-box view..." << std::endl;
-        renderDebugView(scene, framebuffer, width, height, eye, right, up, forward, scale, aspectRatio);
-        writePPM(view.outputFile, framebuffer, width, height, scene.config);
-        return;
-    }
 
     std::cout << "Rendering " << width << "x" << height << " @ " << spp << " spp..." << std::endl;
 
@@ -208,90 +176,7 @@ void Renderer::renderView(const Scene& scene, const CameraView& view) {
         }
     }
     std::cout << "\nRendering complete." << std::endl;
-    scene.printMaterialRoleDiagnostics();
-
-    writePPM(view.outputFile, framebuffer, width, height, scene.config);
-}
-
-void Renderer::renderDebugView(const Scene& scene, std::vector<Vec3f>& framebuffer,
-                                int width, int height, const Vec3f& eye,
-                                const Vec3f& right, const Vec3f& up,
-                                const Vec3f& forward, float scale,
-                                float aspectRatio) {
-    std::fill(framebuffer.begin(), framebuffer.end(), Vec3f(0.04f, 0.045f, 0.055f));
-
-    auto project = [&](const Vec3f& p, int& sx, int& sy) {
-        Vec3f rel = p - eye;
-        float z = dot(rel, forward);
-        if (z <= 1e-4f) return false;
-
-        float ndcX = dot(rel, right) / (z * aspectRatio * scale);
-        float ndcY = dot(rel, up) / (z * scale);
-        sx = (int)((ndcX * 0.5f + 0.5f) * (float)(width - 1));
-        sy = (int)((0.5f - ndcY * 0.5f) * (float)(height - 1));
-        return sx >= -width && sx <= width * 2 && sy >= -height && sy <= height * 2;
-    };
-
-    auto putPixel = [&](int x, int y, const Vec3f& color) {
-        if (x < 0 || x >= width || y < 0 || y >= height) return;
-        framebuffer[y * width + x] = color;
-    };
-
-    auto drawLine2D = [&](int x0, int y0, int x1, int y1, const Vec3f& color) {
-        int dx = std::abs(x1 - x0);
-        int sx = x0 < x1 ? 1 : -1;
-        int dy = -std::abs(y1 - y0);
-        int sy = y0 < y1 ? 1 : -1;
-        int err = dx + dy;
-        while (true) {
-            putPixel(x0, y0, color);
-            if (x0 == x1 && y0 == y1) break;
-            int e2 = 2 * err;
-            if (e2 >= dy) {
-                err += dy;
-                x0 += sx;
-            }
-            if (e2 <= dx) {
-                err += dx;
-                y0 += sy;
-            }
-        }
-    };
-
-    auto drawLine3D = [&](const Vec3f& a, const Vec3f& b, const Vec3f& color) {
-        int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-        if (!project(a, x0, y0) || !project(b, x1, y1)) return;
-        drawLine2D(x0, y0, x1, y1, color);
-    };
-
-    AABB bounds = scene.bounds();
-    Vec3f center = bounds.centroid();
-    Vec3f size = bounds.extent();
-    float axisLen = std::max({size.x, size.y, size.z, 1.0f}) * 0.35f;
-
-    drawLine3D(Vec3f(0), Vec3f(axisLen, 0, 0), Vec3f(1, 0.1f, 0.1f));
-    drawLine3D(Vec3f(0), Vec3f(0, axisLen, 0), Vec3f(0.1f, 1, 0.1f));
-    drawLine3D(Vec3f(0), Vec3f(0, 0, axisLen), Vec3f(0.1f, 0.35f, 1));
-
-    Vec3f mn = bounds.min_p;
-    Vec3f mx = bounds.max_p;
-    Vec3f corners[8] = {
-        {mn.x, mn.y, mn.z}, {mx.x, mn.y, mn.z}, {mx.x, mx.y, mn.z}, {mn.x, mx.y, mn.z},
-        {mn.x, mn.y, mx.z}, {mx.x, mn.y, mx.z}, {mx.x, mx.y, mx.z}, {mn.x, mx.y, mx.z}
-    };
-    int edges[12][2] = {
-        {0, 1}, {1, 2}, {2, 3}, {3, 0},
-        {4, 5}, {5, 6}, {6, 7}, {7, 4},
-        {0, 4}, {1, 5}, {2, 6}, {3, 7}
-    };
-    for (auto& edge : edges) {
-        drawLine3D(corners[edge[0]], corners[edge[1]], Vec3f(1.0f, 0.9f, 0.2f));
-    }
-
-    float crossLen = axisLen * 0.05f;
-    drawLine3D(center - Vec3f(crossLen, 0, 0), center + Vec3f(crossLen, 0, 0), Vec3f(1));
-    drawLine3D(center - Vec3f(0, crossLen, 0), center + Vec3f(0, crossLen, 0), Vec3f(1));
-    drawLine3D(center - Vec3f(0, 0, crossLen), center + Vec3f(0, 0, crossLen), Vec3f(1));
+    writePPM(scene.config.render.outputFile, framebuffer, width, height, scene.config);
 }
 
 void Renderer::writePPM(const std::string& filename, const std::vector<Vec3f>& framebuffer,

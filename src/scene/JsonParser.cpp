@@ -1,4 +1,4 @@
-#include "JsonParser.h"
+#include "scene/JsonParser.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -31,14 +31,6 @@ std::filesystem::path resolveInputPath(const std::string& filename) {
     }
 
     return path;
-}
-
-std::string resolveRelativeTo(const std::filesystem::path& baseDir, const std::string& value) {
-    std::filesystem::path path(value);
-    if (path.is_relative()) {
-        return (baseDir / path).string();
-    }
-    return path.string();
 }
 
 std::string resolveAssetPath(const std::filesystem::path& baseDir, const std::string& value) {
@@ -205,73 +197,15 @@ void JsonParser::parseRender(Lexer& lex, SceneConfig& cfg) {
     while (t.type != Token::RBRACE) {
         std::string key = t.value;
         expectToken(lex, Token::COLON);
-        if (key == "width") cfg.width = (int)expectNumber(lex);
-        else if (key == "height") cfg.height = (int)expectNumber(lex);
-        else if (key == "samples") cfg.spp = (int)expectNumber(lex);
-        else if (key == "maxDepth") cfg.maxDepth = (int)expectNumber(lex);
-        else if (key == "output") cfg.outputFile = expectString(lex);
-        else if (key == "debug" || key == "debugMode") cfg.debugMode = expectBool(lex);
-        else if (key == "materialDebug") cfg.materialDebug = expectString(lex);
-        else if (key == "renderMode") cfg.renderMode = expectString(lex);
-        else if (key == "toneMapping") cfg.toneMapping = expectString(lex);
-        else if (key == "displayExposure" || key == "exposure") cfg.displayExposure = (float)expectNumber(lex);
-        else if (key == "highlightCompression") cfg.highlightCompression = (float)expectNumber(lex);
-        else if (key == "whitePoint") cfg.whitePoint = (float)expectNumber(lex);
-        else if (key == "aircraftClearcoatStrength") cfg.aircraftClearcoatStrength = (float)expectNumber(lex);
-        else if (key == "aircraftClearcoatEnvBoost") cfg.aircraftClearcoatEnvBoost = (float)expectNumber(lex);
-        else if (key == "aircraftClearcoatF0") cfg.aircraftClearcoatF0 = (float)expectNumber(lex);
-        else if (key == "aircraftMirrorDebug") cfg.aircraftMirrorDebug = expectBool(lex);
-        else if (key == "normalStrength") cfg.normalStrength = (float)expectNumber(lex);
-        else if (key == "normalDetailStrength" || key == "detailStrength") cfg.normalDetailStrength = (float)expectNumber(lex);
-        else if (key == "flipNormalGreen") cfg.flipNormalGreen = expectBool(lex);
-        else if (key == "debugNormalMap") cfg.debugNormalMap = expectBool(lex);
-        else if (key == "sharpNormalSampling") cfg.sharpNormalSampling = expectBool(lex);
-        else if (key == "canopyGlassUsePhysical") cfg.canopyGlassUsePhysical = expectBool(lex);
-        else if (key == "canopyGlassIOR") cfg.canopyGlassIOR = (float)expectNumber(lex);
-        else if (key == "canopyGlassF0") cfg.canopyGlassF0 = (float)expectNumber(lex);
-        else if (key == "canopyGlassReflectionBoost") cfg.canopyGlassReflectionBoost = (float)expectNumber(lex);
-        else if (key == "canopyGlassTransmissionTint") cfg.canopyGlassTransmissionTint = parseVec3(lex);
-        else if (key == "canopyGlassCoolReflectionFactor") cfg.canopyGlassCoolReflectionFactor = parseVec3(lex);
-        else if (key == "canopyGlassCenterDarkness") cfg.canopyGlassCenterDarkness = (float)expectNumber(lex);
-        else if (key == "canopyFresnelPower") cfg.canopyFresnelPower = (float)expectNumber(lex);
-        else if (key == "canopyFresnelBase") cfg.canopyFresnelBase = (float)expectNumber(lex);
-        else if (key == "canopyReflectionMix") cfg.canopyReflectionMix = (float)expectNumber(lex);
-        else if (key == "canopyGlintStrength") cfg.canopyGlintStrength = (float)expectNumber(lex);
-        else if (key == "canopyBrightnessBoost") cfg.canopyBrightnessBoost = (float)expectNumber(lex);
-        else if (key == "canopyInteriorDarkness") cfg.canopyInteriorDarkness = (float)expectNumber(lex);
-        else if (key == "canopyCoolReflection") cfg.canopyCoolReflection = parseVec3(lex);
-        else if (key == "canopySmokedCenter") cfg.canopySmokedCenter = parseVec3(lex);
-        else if (key == "propellerAfterimageColor") cfg.propellerAfterimageColor = parseVec3(lex);
-        else if (key == "propellerAfterimageAlpha") cfg.propellerAfterimageAlpha = (float)expectNumber(lex);
-        else if (key == "propellerAfterimageStackReduction") cfg.propellerAfterimageStackReduction = (float)expectNumber(lex);
-        else if (key == "debugMaterialRoles") cfg.debugMaterialRoles = expectBool(lex);
-        else if (key == "debugCanopyExtreme") cfg.debugCanopyExtreme = expectBool(lex);
-        else if (key == "debugPropellerAfterimageExtreme") cfg.debugPropellerAfterimageExtreme = expectBool(lex);
-        else if (key == "debugFakeCockpitPattern") cfg.debugFakeCockpitPattern = expectBool(lex);
-        else if (key == "waterReflectionStrength") cfg.waterReflectionStrength = (float)expectNumber(lex);
-        else if (key == "waterSunReflectionStrength") cfg.waterSunReflectionStrength = (float)expectNumber(lex);
-        else if (key == "waterWarmth") cfg.waterWarmth = (float)expectNumber(lex);
-        else if (key == "waterRoughness") cfg.waterRoughness = (float)expectNumber(lex);
-        else if (key == "waterNormalStrength") cfg.waterNormalStrength = (float)expectNumber(lex);
-        else if (key == "skyFillStrength") cfg.skyFillStrength = (float)expectNumber(lex);
-        else if (key == "horizonFillStrength") cfg.horizonFillStrength = (float)expectNumber(lex);
-        else if (key == "waterBounceStrength") cfg.waterBounceStrength = (float)expectNumber(lex);
-        else if (key == "waterBounceColor") cfg.waterBounceColor = parseVec3(lex);
-        else if (key == "waterBounceDirection") cfg.waterBounceDirection = parseVec3(lex);
-        else if (key == "waterBounceFalloff") cfg.waterBounceFalloff = (float)expectNumber(lex);
-        else if (key == "waterBounceMaxContribution") cfg.waterBounceMaxContribution = (float)expectNumber(lex);
-        else if (key == "upperSkyFillColor") cfg.upperSkyFillColor = parseVec3(lex);
-        else if (key == "environmentDiffuseStrength") cfg.environmentDiffuseStrength = (float)expectNumber(lex);
-        else if (key == "environmentReflectionStrength") cfg.environmentReflectionStrength = (float)expectNumber(lex);
-        else if (key == "ambientStrength") cfg.ambientStrength = (float)expectNumber(lex);
-        else if (key == "shadowLift") cfg.shadowLift = (float)expectNumber(lex);
-        else if (key == "waterReflectionFloor") cfg.waterReflectionFloor = (float)expectNumber(lex);
-        else if (key == "waterFresnelBias") cfg.waterFresnelBias = (float)expectNumber(lex);
-        else if (key == "waterRefractionWeight") cfg.waterRefractionWeight = (float)expectNumber(lex);
-        else if (key == "waterBaseAbsorption") cfg.waterBaseAbsorption = (float)expectNumber(lex);
-        else if (key == "waterForegroundDarkening") cfg.waterForegroundDarkening = (float)expectNumber(lex);
-        else if (key == "waterLargeWaveScale") cfg.waterLargeWaveScale = (float)expectNumber(lex);
-        else if (key == "waterSmallWaveScale") cfg.waterSmallWaveScale = (float)expectNumber(lex);
+        if (key == "width") cfg.render.width = (int)expectNumber(lex);
+        else if (key == "height") cfg.render.height = (int)expectNumber(lex);
+        else if (key == "samples") cfg.render.spp = (int)expectNumber(lex);
+        else if (key == "maxDepth") cfg.render.maxDepth = (int)expectNumber(lex);
+        else if (key == "output") cfg.render.outputFile = expectString(lex);
+        else if (key == "toneMapping") cfg.render.toneMapping = expectString(lex);
+        else if (key == "displayExposure" || key == "exposure") cfg.render.displayExposure = (float)expectNumber(lex);
+        else if (key == "highlightCompression") cfg.render.highlightCompression = (float)expectNumber(lex);
+        else if (key == "whitePoint") cfg.render.whitePoint = (float)expectNumber(lex);
         else skipValue(lex);
 
         t = lex.next();
@@ -285,39 +219,12 @@ void JsonParser::parseCamera(Lexer& lex, SceneConfig& cfg) {
     while (t.type != Token::RBRACE) {
         std::string key = t.value;
         expectToken(lex, Token::COLON);
-        if (key == "enabled") cfg.cameraEnabled = expectBool(lex);
-        else if (key == "position") cfg.cameraPos = parseVec3(lex);
-        else if (key == "lookAt") cfg.cameraLookAt = parseVec3(lex);
-        else if (key == "up" || key == "cameraUp") cfg.cameraUp = parseVec3(lex);
-        else if (key == "right" || key == "cameraRight") cfg.cameraRight = parseVec3(lex);
-        else if (key == "fov") cfg.fov = expectNumber(lex);
-        else skipValue(lex);
-
-        t = lex.next();
-        if (t.type == Token::COMMA) t = lex.next();
-    }
-}
-
-void JsonParser::parseSecondaryCamera(Lexer& lex, SceneConfig& cfg) {
-    cfg.secondaryCameraEnabled = true;
-    cfg.secondaryCameraPos = cfg.cameraPos;
-    cfg.secondaryCameraLookAt = cfg.cameraLookAt;
-    cfg.secondaryCameraRight = cfg.cameraRight;
-    cfg.secondaryCameraUp = cfg.cameraUp;
-    cfg.secondaryFov = cfg.fov;
-
-    expectToken(lex, Token::LBRACE);
-    Token t = lex.next();
-    while (t.type != Token::RBRACE) {
-        std::string key = t.value;
-        expectToken(lex, Token::COLON);
-        if (key == "enabled") cfg.secondaryCameraEnabled = expectBool(lex);
-        else if (key == "position") cfg.secondaryCameraPos = parseVec3(lex);
-        else if (key == "lookAt") cfg.secondaryCameraLookAt = parseVec3(lex);
-        else if (key == "up" || key == "cameraUp") cfg.secondaryCameraUp = parseVec3(lex);
-        else if (key == "right" || key == "cameraRight") cfg.secondaryCameraRight = parseVec3(lex);
-        else if (key == "fov") cfg.secondaryFov = expectNumber(lex);
-        else if (key == "output") cfg.secondaryOutputFile = expectString(lex);
+        if (key == "enabled") cfg.camera.enabled = expectBool(lex);
+        else if (key == "position") cfg.camera.position = parseVec3(lex);
+        else if (key == "lookAt") cfg.camera.lookAt = parseVec3(lex);
+        else if (key == "up" || key == "cameraUp") cfg.camera.up = parseVec3(lex);
+        else if (key == "right" || key == "cameraRight") cfg.camera.right = parseVec3(lex);
+        else if (key == "fov") cfg.camera.fov = expectNumber(lex);
         else skipValue(lex);
 
         t = lex.next();
@@ -329,7 +236,13 @@ void JsonParser::parseObjects(Lexer& lex, SceneConfig& cfg) {
     expectToken(lex, Token::LBRACKET);
     Token t = lex.next();
     while (t.type != Token::RBRACKET) {
-        SceneConfig::ObjectEntry obj;
+        SceneConfig::ObjectEntry obj{};
+        obj.materialColor = Vec3f(-1);
+        obj.scale = 1.0f;
+        obj.roughness = -1.0f;
+        obj.glossyWeight = -1.0f;
+        obj.specularBoost = 1.0f;
+        obj.ior = -1.0f;
         // t should be LBRACE — push back by parsing object starting from here
         // Actually parseObject expects to read LBRACE itself, so we need to handle
         if (t.type == Token::LBRACE || t.type == Token::COMMA) {
@@ -348,12 +261,10 @@ void JsonParser::parseObjects(Lexer& lex, SceneConfig& cfg) {
                 if (key == "type") obj.type = expectString(lex);
                 else if (key == "file") obj.file = expectString(lex);
                 else if (key == "position") obj.position = parseVec3(lex);
-                else if (key == "rotation") obj.rotation = parseVec3(lex);
                 else if (key == "scale") obj.scale = expectNumber(lex);
                 else if (key == "material") obj.materialType = expectString(lex);
                 else if (key == "color") obj.materialColor = parseVec3(lex);
                 else if (key == "roughness") obj.roughness = expectNumber(lex);
-                else if (key == "metallic") obj.metallic = expectNumber(lex);
                 else if (key == "glossyWeight") obj.glossyWeight = expectNumber(lex);
                 else if (key == "specularBoost") obj.specularBoost = expectNumber(lex);
                 else if (key == "ior") obj.ior = expectNumber(lex);
@@ -402,6 +313,70 @@ void JsonParser::parseLighting(Lexer& lex, SceneConfig& cfg) {
     }
 }
 
+void JsonParser::parseWater(Lexer& lex, SceneConfig& cfg) {
+    expectToken(lex, Token::LBRACE);
+    Token t = lex.next();
+    while (t.type != Token::RBRACE) {
+        std::string key = t.value;
+        expectToken(lex, Token::COLON);
+        if (key == "fftEnabled" || key == "waterFftEnabled") cfg.water.fftEnabled = expectBool(lex);
+        else if (key == "fogDensity") cfg.water.fogDensity = (float)expectNumber(lex);
+        else if (key == "reflectionStrength" || key == "waterReflectionStrength") cfg.water.reflectionStrength = (float)expectNumber(lex);
+        else if (key == "normalStrength" || key == "waterNormalStrength") cfg.water.normalStrength = (float)expectNumber(lex);
+        else if (key == "skyFillStrength") cfg.water.skyFillStrength = (float)expectNumber(lex);
+        else if (key == "horizonFillStrength") cfg.water.horizonFillStrength = (float)expectNumber(lex);
+        else if (key == "bounceStrength" || key == "waterBounceStrength") cfg.water.bounceStrength = (float)expectNumber(lex);
+        else if (key == "bounceColor" || key == "waterBounceColor") cfg.water.bounceColor = parseVec3(lex);
+        else if (key == "bounceDirection" || key == "waterBounceDirection") cfg.water.bounceDirection = parseVec3(lex);
+        else if (key == "bounceFalloff" || key == "waterBounceFalloff") cfg.water.bounceFalloff = (float)expectNumber(lex);
+        else if (key == "bounceMaxContribution" || key == "waterBounceMaxContribution") cfg.water.bounceMaxContribution = (float)expectNumber(lex);
+        else if (key == "upperSkyFillColor") cfg.water.upperSkyFillColor = parseVec3(lex);
+        else if (key == "environmentDiffuseStrength") cfg.water.environmentDiffuseStrength = (float)expectNumber(lex);
+        else if (key == "ambientStrength") cfg.water.ambientStrength = (float)expectNumber(lex);
+        else if (key == "shadowLift") cfg.water.shadowLift = (float)expectNumber(lex);
+        else if (key == "largeWaveScale" || key == "waterLargeWaveScale") cfg.water.largeWaveScale = (float)expectNumber(lex);
+        else if (key == "smallWaveScale" || key == "waterSmallWaveScale") cfg.water.smallWaveScale = (float)expectNumber(lex);
+        else if (key == "swell") {
+            expectToken(lex, Token::LBRACE);
+            Token inner = lex.next();
+            while (inner.type != Token::RBRACE) {
+                std::string innerKey = inner.value;
+                expectToken(lex, Token::COLON);
+                if (innerKey == "resolution") cfg.water.swell.resolution = (int)expectNumber(lex);
+                else if (innerKey == "patchLength") cfg.water.swell.patchLength = (float)expectNumber(lex);
+                else if (innerKey == "windSpeed") cfg.water.swell.windSpeed = (float)expectNumber(lex);
+                else if (innerKey == "windDirection") cfg.water.swell.windDirection = parseVec3(lex);
+                else if (innerKey == "waveHeight") cfg.water.swell.waveHeight = (float)expectNumber(lex);
+                else if (innerKey == "time") cfg.water.swell.time = (float)expectNumber(lex);
+                else skipValue(lex);
+                inner = lex.next();
+                if (inner.type == Token::COMMA) inner = lex.next();
+            }
+        }
+        else if (key == "ripple") {
+            expectToken(lex, Token::LBRACE);
+            Token inner = lex.next();
+            while (inner.type != Token::RBRACE) {
+                std::string innerKey = inner.value;
+                expectToken(lex, Token::COLON);
+                if (innerKey == "resolution") cfg.water.ripple.resolution = (int)expectNumber(lex);
+                else if (innerKey == "patchLength") cfg.water.ripple.patchLength = (float)expectNumber(lex);
+                else if (innerKey == "windSpeed") cfg.water.ripple.windSpeed = (float)expectNumber(lex);
+                else if (innerKey == "windDirection") cfg.water.ripple.windDirection = parseVec3(lex);
+                else if (innerKey == "waveHeight") cfg.water.ripple.waveHeight = (float)expectNumber(lex);
+                else if (innerKey == "time") cfg.water.ripple.time = (float)expectNumber(lex);
+                else skipValue(lex);
+                inner = lex.next();
+                if (inner.type == Token::COMMA) inner = lex.next();
+            }
+        }
+        else skipValue(lex);
+
+        t = lex.next();
+        if (t.type == Token::COMMA) t = lex.next();
+    }
+}
+
 void JsonParser::parseSky(Lexer& lex, SceneConfig& cfg) {
     expectToken(lex, Token::LBRACE);
     Token t = lex.next();
@@ -409,19 +384,14 @@ void JsonParser::parseSky(Lexer& lex, SceneConfig& cfg) {
         std::string key = t.value;
         expectToken(lex, Token::COLON);
         if      (key == "enabled")           cfg.sky.enabled          = expectBool(lex);
-        else if (key == "topColor")          cfg.sky.topColor         = parseVec3(lex);
         else if (key == "horizonColor")      cfg.sky.horizonColor     = parseVec3(lex);
-        else if (key == "bottomColor")       cfg.sky.bottomColor      = parseVec3(lex);
         else if (key == "sunDirection")      cfg.sky.sunDirection     = parseVec3(lex);
         else if (key == "sunDiskColor")      cfg.sky.sunDiskColor     = parseVec3(lex);
         else if (key == "sunGlowColor")      cfg.sky.sunGlowColor     = parseVec3(lex);
-        else if (key == "sunDiskPower")      cfg.sky.sunDiskPower     = expectNumber(lex);
-        else if (key == "sunGlowPower")      cfg.sky.sunGlowPower     = expectNumber(lex);
         else if (key == "sunAngularRadius")  cfg.sky.sunAngularRadius = expectNumber(lex);
         else if (key == "sunEdgeSoftness")   cfg.sky.sunEdgeSoftness  = expectNumber(lex);
         else if (key == "sunIntensity")      cfg.sky.sunIntensity     = expectNumber(lex);
         else if (key == "sunDiskIntensity")  cfg.sky.sunDiskIntensity = expectNumber(lex);
-        else if (key == "sunGlowIntensity")  cfg.sky.sunGlowIntensity = expectNumber(lex);
         else if (key == "skyIntensity")      cfg.sky.skyIntensity     = expectNumber(lex);
         else if (key == "horizonWarmth")     cfg.sky.horizonWarmth    = expectNumber(lex);
         else if (key == "sunsetGradientStrength") cfg.sky.sunsetGradientStrength = expectNumber(lex);
@@ -438,9 +408,6 @@ void JsonParser::parseSky(Lexer& lex, SceneConfig& cfg) {
         else if (key == "cloudSunEdgeIntensity")     cfg.sky.cloudSunEdgeIntensity     = expectNumber(lex);
         else if (key == "cloudSunEdgePower")         cfg.sky.cloudSunEdgePower         = expectNumber(lex);
         else if (key == "cloudSunFocusPower")        cfg.sky.cloudSunFocusPower        = expectNumber(lex);
-        // Legacy keys for backward compatibility
-        else if (key == "top")    cfg.sky.topColor    = parseVec3(lex);
-        else if (key == "bottom") cfg.sky.bottomColor = parseVec3(lex);
         else skipValue(lex);
 
         t = lex.next();
@@ -451,7 +418,7 @@ void JsonParser::parseSky(Lexer& lex, SceneConfig& cfg) {
 // ===== Main parse =====
 
 SceneConfig JsonParser::parse(const std::string& filename) {
-    SceneConfig cfg;
+    SceneConfig cfg{};
 
     // Load finalized parameters first so scene.json can selectively override them.
     // Look for locked_settings.json beside the scene file; skip silently if absent.
@@ -488,21 +455,14 @@ void JsonParser::parseInto(const std::string& filename, SceneConfig& cfg) {
 
         if (key == "render") parseRender(lex, cfg);
         else if (key == "camera") parseCamera(lex, cfg);
-        else if (key == "camera2" || key == "secondaryCamera") parseSecondaryCamera(lex, cfg);
         else if (key == "objects") parseObjects(lex, cfg);
         else if (key == "lighting") parseLighting(lex, cfg);
+        else if (key == "water") parseWater(lex, cfg);
         else if (key == "sky") parseSky(lex, cfg);
         else skipValue(lex);
 
         t = lex.next();
         if (t.type == Token::COMMA) t = lex.next();
-    }
-
-    if (cfg.outputFile != "output.ppm") {
-        cfg.outputFile = resolveRelativeTo(baseDir, cfg.outputFile);
-    }
-    if (cfg.secondaryOutputFile != "output_2.ppm") {
-        cfg.secondaryOutputFile = resolveRelativeTo(baseDir, cfg.secondaryOutputFile);
     }
 
     for (auto& obj : cfg.objects) {

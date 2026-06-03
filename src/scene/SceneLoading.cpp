@@ -1,7 +1,5 @@
-#include "Scene.h"
-#include "MeshUtils.h"
-#include "MtlConverter.h"
-#include "OBJ_Loader.h"
+#include "scene/Scene.h"
+#include "third_party/OBJ_Loader.h"
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -42,11 +40,48 @@ Vec3f blenderToRendererPoint(const Vec3f& v) {
 Vec3f blenderToRendererVector(const Vec3f& v) {
     return blenderToRendererPoint(v).normalized();
 }
+
+Vec3f safeNormalizeScene(const Vec3f& v, const Vec3f& fallback = Vec3f(0, 1, 0)) {
+    const float len2 = v.length2();
+    if (len2 < 1e-12f || !std::isfinite(len2)) {
+        return fallback;
+    }
+    return v / std::sqrt(len2);
+}
+
+float roughnessFromNs(float ns) {
+    float roughness = std::sqrt(2.0f / (ns + 2.0f));
+    return std::clamp(roughness, 0.02f, 1.0f);
+}
+
+float glossyWeightFromKs(const Vec3f& ks) {
+    return std::clamp(ks.max_component() * 0.35f, 0.0f, 0.35f);
+}
+
+void computeTriangleTangents(Triangle& tri) {
+    const Vec3f edge1 = tri.v1 - tri.v0;
+    const Vec3f edge2 = tri.v2 - tri.v0;
+    const float du1 = tri.u1 - tri.u0;
+    const float dv1 = tri.v1t - tri.v0t;
+    const float du2 = tri.u2 - tri.u0;
+    const float dv2 = tri.v2t - tri.v0t;
+    const float det = du1 * dv2 - du2 * dv1;
+
+    if (std::fabs(det) < 1e-8f || !std::isfinite(det)) {
+        tri.hasTangent = false;
+        return;
+    }
+
+    const float invDet = 1.0f / det;
+    tri.tangent = safeNormalizeScene((edge1 * dv2 - edge2 * dv1) * invDet, Vec3f(0.0f));
+    tri.bitangent = safeNormalizeScene((edge2 * du1 - edge1 * du2) * invDet, Vec3f(0.0f));
+    tri.hasTangent = tri.tangent.length2() > 1e-8f && tri.bitangent.length2() > 1e-8f;
+}
 }
 
 void Scene::loadFromConfig(const SceneConfig& cfg) {
     config = cfg;
-    resetMaterialRoleDiagnostics();
+    sky.setConfig(config.sky);
     triangles.clear();
     materials.clear();
     materialMap.clear();
@@ -84,11 +119,39 @@ void Scene::loadFromConfig(const SceneConfig& cfg) {
 }
 
 void Scene::loadOcean() {
-    ocean = std::make_unique<Ocean>(256, 150.0f, 12.0f, Vec3f(1, 0, 0.5f).normalized(), 1.5f, 5.0f);
+    ocean.reset();
+    oceanRipple.reset();
+
+    if (!config.water.fftEnabled) {
+        std::cout << "Ocean FFT disabled. Water falls back to the mesh geometric normal." << std::endl;
+        return;
+    }
+
+    const auto& swell = config.water.swell;
+    ocean = std::make_unique<Ocean>(
+        swell.resolution > 0 ? swell.resolution : 256,
+        swell.patchLength > 0.0f ? swell.patchLength : 150.0f,
+        swell.windSpeed > 0.0f ? swell.windSpeed : 12.0f,
+        swell.windDirection.length2() > 1e-8f ? swell.windDirection.normalized() : Vec3f(1, 0, 0.5f).normalized(),
+        swell.waveHeight > 0.0f ? swell.waveHeight : 1.5f,
+        swell.time > 0.0f ? swell.time : 5.0f
+    );
     ocean->generate();
-    oceanRipple = std::make_unique<Ocean>(128, 12.0f, 4.5f, Vec3f(0.8f, 0, 0.6f).normalized(), 0.14f, 8.0f);
+    const auto& ripple = config.water.ripple;
+    oceanRipple = std::make_unique<Ocean>(
+        ripple.resolution > 0 ? ripple.resolution : 128,
+        ripple.patchLength > 0.0f ? ripple.patchLength : 12.0f,
+        ripple.windSpeed > 0.0f ? ripple.windSpeed : 4.5f,
+        ripple.windDirection.length2() > 1e-8f ? ripple.windDirection.normalized() : Vec3f(0.8f, 0, 0.6f).normalized(),
+        ripple.waveHeight > 0.0f ? ripple.waveHeight : 0.14f,
+        ripple.time > 0.0f ? ripple.time : 8.0f
+    );
     oceanRipple->generate();
-    std::cout << "Ocean FFT generated (large swell L=150m + ripple L=12m)." << std::endl;
+    std::cout << "Ocean FFT generated (swell L="
+              << (swell.patchLength > 0.0f ? swell.patchLength : 150.0f)
+              << "m + ripple L="
+              << (ripple.patchLength > 0.0f ? ripple.patchLength : 12.0f)
+              << "m)." << std::endl;
 }
 
 void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
@@ -109,17 +172,13 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
         Material mat;
         mat.name = mtl.name;
         mat.color = Vec3f(mtl.Kd.X, mtl.Kd.Y, mtl.Kd.Z);
-        mat.mtlNs = mtl.Ns;
         mat.specularColor = Vec3f(mtl.Ks.X, mtl.Ks.Y, mtl.Ks.Z);
-        mat.glossyWeightBase = glossyWeightFromKs(mat.specularColor);
-        mat.glossyWeight = mat.glossyWeightBase;
+        mat.glossyWeight = glossyWeightFromKs(mat.specularColor);
 
         // Auto-detect material type from MTL fields
         if (entry.materialType == "metal" ||
             (entry.materialType.empty() && mtl.illum >= 3 && mtl.Ks.X + mtl.Ks.Y + mtl.Ks.Z > 0.5f)) {
             mat.type = MaterialType::METAL;
-            mat.metallicBase = 1.0f;
-            mat.metallic = mat.metallicBase;
         } else if (entry.materialType == "glass" ||
                    (entry.materialType.empty() && mtl.d < 0.9f && mtl.illum >= 4)) {
             mat.type = MaterialType::DIELECTRIC;
@@ -133,23 +192,16 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
 
         if (std::isfinite(mtl.Ns) && mtl.Ns > 0.0f &&
             (mat.type == MaterialType::DIFFUSE || mat.type == MaterialType::METAL)) {
-            mat.roughnessFromNs = roughnessFromNs(mtl.Ns);
-            mat.roughness = mat.roughnessFromNs;
+            mat.roughness = roughnessFromNs(mtl.Ns);
         }
 
         // JSON overrides
         if (entry.materialColor.x >= 0) mat.color = entry.materialColor;
         if (entry.roughness >= 0) {
             mat.roughness = entry.roughness;
-            mat.usedJsonRoughnessOverride = true;
-        }
-        if (entry.metallic >= 0) {
-            mat.metallic = std::clamp(entry.metallic, 0.0f, 1.0f);
-            mat.usedJsonMetallicOverride = true;
         }
         if (entry.glossyWeight >= 0) {
             mat.glossyWeight = std::clamp(entry.glossyWeight, 0.0f, 0.8f);
-            mat.usedJsonGlossyWeightOverride = true;
         }
         mat.specularBoost = std::clamp(entry.specularBoost, 0.0f, 4.0f);
         if (entry.ior >= 0) mat.ior = entry.ior;
@@ -183,14 +235,6 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
             }
         }
 
-        applyMaterialNameOverride(mat);
-        if (mat.role == MaterialRole::CANOPY_GLASS) {
-            mat.ior = config.canopyGlassIOR;
-            mat.fresnelF0 = config.canopyGlassF0;
-        } else if (mat.role == MaterialRole::PROPELLER_AFTERIMAGE) {
-            mat.alpha = std::clamp(config.propellerAfterimageAlpha, 0.0f, 0.5f);
-        }
-
         materialMap[mtl.name] = (int)materials.size();
         materials.push_back(mat);
     }
@@ -203,20 +247,11 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
         if (entry.materialType == "metal") defaultMat.type = MaterialType::METAL;
         else if (entry.materialType == "glass") defaultMat.type = MaterialType::DIELECTRIC;
         else if (entry.materialType == "emissive") defaultMat.type = MaterialType::EMISSIVE;
-        if (defaultMat.type == MaterialType::METAL) {
-            defaultMat.metallicBase = 1.0f;
-            defaultMat.metallic = defaultMat.metallicBase;
-        }
 
         if (entry.materialColor.x >= 0) defaultMat.color = entry.materialColor;
         if (entry.roughness >= 0) defaultMat.roughness = entry.roughness;
-        if (entry.metallic >= 0) {
-            defaultMat.metallic = std::clamp(entry.metallic, 0.0f, 1.0f);
-            defaultMat.usedJsonMetallicOverride = true;
-        }
         if (entry.glossyWeight >= 0) {
             defaultMat.glossyWeight = std::clamp(entry.glossyWeight, 0.0f, 0.8f);
-            defaultMat.usedJsonGlossyWeightOverride = true;
         }
         defaultMat.specularBoost = std::clamp(entry.specularBoost, 0.0f, 4.0f);
         if (entry.ior >= 0) defaultMat.ior = entry.ior;
@@ -241,7 +276,7 @@ void Scene::loadOBJ(const SceneConfig::ObjectEntry& entry) {
                 if (entry.convertFromBlender) {
                     pos = blenderToRendererPoint(pos);
                 }
-                // Apply transform: scale -> rotate (TODO) -> translate
+                // Apply transform: scale -> translate
                 pos = pos * entry.scale + entry.position;
 
                 Vec3f nor(v.Normal.X, v.Normal.Y, v.Normal.Z);
@@ -276,21 +311,14 @@ void Scene::addPlane(const SceneConfig::ObjectEntry& entry) {
         mat.color = entry.materialColor.x >= 0 ? entry.materialColor : Vec3f(0.1f, 0.2f, 0.4f);
     } else if (entry.materialType == "metal") {
         mat.type = MaterialType::METAL;
-        mat.metallicBase = 1.0f;
-        mat.metallic = mat.metallicBase;
         mat.roughness = entry.roughness >= 0 ? entry.roughness : 0.1f;
         mat.color = entry.materialColor.x >= 0 ? entry.materialColor : Vec3f(0.8f);
     } else {
         mat.type = MaterialType::DIFFUSE;
         mat.color = entry.materialColor.x >= 0 ? entry.materialColor : Vec3f(0.5f);
     }
-    if (entry.metallic >= 0) {
-        mat.metallic = std::clamp(entry.metallic, 0.0f, 1.0f);
-        mat.usedJsonMetallicOverride = true;
-    }
     if (entry.glossyWeight >= 0) {
         mat.glossyWeight = std::clamp(entry.glossyWeight, 0.0f, 0.8f);
-        mat.usedJsonGlossyWeightOverride = true;
     }
     mat.specularBoost = std::clamp(entry.specularBoost, 0.0f, 4.0f);
 

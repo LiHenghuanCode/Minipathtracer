@@ -10,19 +10,15 @@ find_package(OpenMP REQUIRED)
 
 add_executable(pathtracer
     src/main.cpp
-    src/Material.cpp
-    src/MtlConverter.cpp
-    src/MeshUtils.cpp
-    src/SceneLoading.cpp
-    src/Diagnostics.cpp
-    src/Sky.cpp
-    src/AircraftShaders.cpp
-    src/Renderer.cpp
-    src/Scene.cpp
-    src/BVH.cpp
-    src/Texture.cpp
-    src/JsonParser.cpp
-    src/Ocean.cpp
+    src/core/Material.cpp
+    src/scene/SceneLoading.cpp
+    src/environment/Sky.cpp
+    src/core/Renderer.cpp
+    src/scene/Scene.cpp
+    src/core/BVH.cpp
+    src/scene/Texture.cpp
+    src/scene/JsonParser.cpp
+    src/environment/Ocean.cpp
 )
 
 target_include_directories(pathtracer PRIVATE include)

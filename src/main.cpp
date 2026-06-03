@@ -1,6 +1,6 @@
-#include "Scene.h"
-#include "Renderer.h"
-#include "JsonParser.h"
+#include "scene/Scene.h"
+#include "core/Renderer.h"
+#include "scene/JsonParser.h"
 #include <iostream>
 #include <string>
 
@@ -16,9 +16,9 @@ int main(int argc, char* argv[]) {
     try {
         SceneConfig config = JsonParser::parse(configFile);
 
-        std::cout << "Resolution: " << config.width << "x" << config.height << std::endl;
-        std::cout << "SPP: " << config.spp << std::endl;
-        std::cout << "Max Depth: " << config.maxDepth << std::endl;
+        std::cout << "Resolution: " << config.render.width << "x" << config.render.height << std::endl;
+        std::cout << "SPP: " << config.render.spp << std::endl;
+        std::cout << "Max Depth: " << config.render.maxDepth << std::endl;
         std::cout << "Objects: " << config.objects.size() << std::endl;
 
         Scene scene;
